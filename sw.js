@@ -1,10 +1,13 @@
-// WOD Architect — Service Worker v11
+// WOD Architect — Service Worker v16
 // Strategy:
 //   index.html + manifest.json → Network first, fall back to cache (always get latest)
+//   js/*.js + css/*.css        → Network first, fall back to cache (always get latest —
+//                                 same treatment as index.html, since this is the same
+//                                 app logic, just split into separate files now)
 //   CDN libraries + icons     → Cache first (never change)
 //   Supabase + Google APIs    → Network only (never cache)
 
-const CACHE = 'wod-architect-v15';
+const CACHE = 'wod-architect-v16';
 const CACHE_STATIC = [
   './manifest.json',
   './icons/icon-192.png',
@@ -80,6 +83,27 @@ self.addEventListener('fetch', e => {
         // Offline — serve cached version
         return caches.match('./index.html') || caches.match(e.request);
       })
+    );
+    return;
+  }
+
+  // ── App logic (js/*.js) and stylesheet (css/*.css) — network first,
+  // fall back to cache. Same treatment as index.html and for the same
+  // reason: this is the app's own code, split into separate files from
+  // what used to be inline in index.html — it needs to update immediately
+  // on every deploy, not sit cache-first like a rarely-changing icon.
+  // Without this handler, these files would fall through to the generic
+  // "everything else" handler below, which never populates the cache —
+  // meaning they'd have no offline fallback at all.
+  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    e.respondWith(
+      fetch(e.request).then(r => {
+        if (r && r.status === 200) {
+          const cl = r.clone();
+          caches.open(CACHE).then(c => c.put(e.request, cl));
+        }
+        return r;
+      }).catch(() => caches.match(e.request))
     );
     return;
   }
