@@ -1470,6 +1470,7 @@ function renderFbDurationChart(canvasId, filters) {
   if (isFullscreen) {
     window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
     _fbDurationWireTrackpadPan(canvas, instKey);
+    _fbDurationWireTouchGestures(canvas, instKey);
   }
 }
 
@@ -1522,6 +1523,111 @@ function _fbDurationWireTrackpadPan(canvas, instKey) {
     chart.update('none');
     _fbDurationSyncSlidersFromChart(chart);
   }, { passive: false });
+}
+
+// Custom touch pinch-zoom/drag-pan — deliberately independent of
+// chartjs-plugin-zoom's own touch handling, the same way
+// _fbDurationWireTrackpadPan above is independent of its wheel
+// handling. Every round of testing on this feature so far happened on
+// a Mac trackpad, which goes entirely through the wheel handler and
+// never touches the plugin's touch code path at all — so the plugin's
+// touch support was never actually verified working, only assumed to
+// be. This removes that unverified dependency for phones/tablets
+// entirely, rather than continuing to debug a third-party code path
+// blind with no console access on the affected device.
+//
+// A plain single-finger TAP is deliberately left untouched — no
+// preventDefault, no state captured beyond the starting point — so it
+// still becomes a synthetic 'click' event and continues to trigger the
+// existing onClick point-selection handler above. Only once a single
+// touch moves past a small pixel threshold does this take over as a
+// drag-to-pan; two simultaneous touches are always treated as
+// pinch-to-zoom immediately, no threshold needed since a second touch
+// point starting at all is already unambiguous.
+function _fbDurationWireTouchGestures(canvas, instKey) {
+  if (!canvas || canvas._fbdTouchWired) return;
+  canvas._fbdTouchWired = true;
+  canvas.style.touchAction = 'none';
+  const DRAG_THRESHOLD = 8; // px — a single touch under this stays a tap
+  let touchState = null;
+
+  const dist = (t0, t1) => Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+
+  canvas.addEventListener('touchstart', (e) => {
+    const chart = chartInstances[instKey];
+    if (!chart || !chart.scales?.x || !chart.scales?.y) return;
+    if (e.touches.length === 2) {
+      touchState = {
+        mode: 'pinch', startDist: dist(e.touches[0], e.touches[1]),
+        xMin0: chart.scales.x.min, xMax0: chart.scales.x.max,
+        yMin0: chart.scales.y.min, yMax0: chart.scales.y.max
+      };
+    } else if (e.touches.length === 1) {
+      touchState = {
+        mode: 'pending', // only promoted to 'pan' once it crosses DRAG_THRESHOLD — see touchmove
+        startX: e.touches[0].clientX, startY: e.touches[0].clientY,
+        xMin0: chart.scales.x.min, xMax0: chart.scales.x.max,
+        yMin0: chart.scales.y.min, yMax0: chart.scales.y.max
+      };
+    } else {
+      touchState = null;
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', (e) => {
+    const chart = chartInstances[instKey];
+    if (!chart || !touchState) return;
+    const xRange0 = touchState.xMax0 - touchState.xMin0;
+    const yRange0 = touchState.yMax0 - touchState.yMin0;
+    const xPixels = chart.chartArea.width || 1, yPixels = chart.chartArea.height || 1;
+
+    if (touchState.mode === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const newDist = dist(e.touches[0], e.touches[1]) || 1;
+      // Fingers spreading apart (newDist > startDist) should zoom IN —
+      // scale < 1 shrinks the visible range, same convention native
+      // pinch-zoom uses everywhere else on the phone.
+      const scale = touchState.startDist / newDist;
+      ['x', 'y'].forEach(axisId => {
+        const min0 = axisId === 'x' ? touchState.xMin0 : touchState.yMin0;
+        const max0 = axisId === 'x' ? touchState.xMax0 : touchState.yMax0;
+        const midVal = (min0 + max0) / 2;
+        const halfRange = (max0 - min0) / 2 * scale;
+        chart.options.scales[axisId].min = midVal - halfRange;
+        chart.options.scales[axisId].max = midVal + halfRange;
+      });
+      chart.update('none');
+    } else if ((touchState.mode === 'pending' || touchState.mode === 'pan') && e.touches.length === 1) {
+      const dx = e.touches[0].clientX - touchState.startX;
+      const dy = e.touches[0].clientY - touchState.startY;
+      if (touchState.mode === 'pending') {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return; // still just a tap so far — leave it alone
+        touchState.mode = 'pan';
+      }
+      e.preventDefault();
+      // Same sign convention as the wheel handler's swipe-pan above
+      // (content follows the finger/gesture direction) — dragging
+      // right reveals what's to the left, dragging down reveals what's
+      // above, matching ordinary touch-scroll behavior elsewhere.
+      const xShift = -(dx / xPixels) * xRange0;
+      const yShift = -(dy / yPixels) * yRange0;
+      chart.options.scales.x.min = touchState.xMin0 + xShift;
+      chart.options.scales.x.max = touchState.xMax0 + xShift;
+      chart.options.scales.y.min = touchState.yMin0 + yShift;
+      chart.options.scales.y.max = touchState.yMax0 + yShift;
+      chart.update('none');
+    }
+  }, { passive: false });
+
+  const endTouch = () => {
+    const chart = chartInstances[instKey];
+    if (chart && touchState && (touchState.mode === 'pinch' || touchState.mode === 'pan')) {
+      _fbDurationSyncSlidersFromChart(chart);
+    }
+    touchState = null;
+  };
+  canvas.addEventListener('touchend', endTouch, { passive: true });
+  canvas.addEventListener('touchcancel', endTouch, { passive: true });
 }
 
 function openFbDurationFullscreen() {
