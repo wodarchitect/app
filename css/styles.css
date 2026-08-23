@@ -1580,3 +1580,61 @@
       font-weight:800; font-size:.84rem; cursor:pointer; z-index:99999;
       box-shadow:0 4px 20px rgba(0,0,0,.35); white-space:nowrap;
     }
+    /* Session Coverage Workbench scatter plot — touch-action:none stops
+       the browser from intercepting two-finger trackpad/touch gestures
+       as page scroll/navigation before they reach the manual wheel
+       pan/zoom handler in _fbDurationWireTrackpadPan (workbench.js). */
+    #chart-fbduration-fs { touch-action: none; }
+    /* Dual-handle range slider — FB/Duration Workbench axis controls.
+       Classic overlapping-<input type=range> technique: two native
+       range inputs share the same track box, each transparent except
+       for its own thumb, so both handles are independently draggable
+       with proper touch hit-targets on mobile without any extra
+       library. ONE bordered container per slider (.dual-range-card) —
+       no nested wrapper inside it — with generous side padding (14px)
+       so the track's own 100%-width span never touches the card's
+       border. */
+    .dual-range-card {
+      margin: 14px 20px 0; padding: 12px 14px; background: var(--card-bg);
+      border: 1px solid var(--glass-border); border-radius: 10px;
+    }
+    .dual-range-card-header {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .dual-range-card-label { font-size: .68rem; color: var(--text); font-weight: 700; }
+    .dual-range-card-value { font-size: .68rem; color: var(--label); font-weight: 400; }
+    .dual-range { position: relative; height: 34px; margin-top: 12px; }
+    .dual-range input[type="range"] {
+      /* Explicit resets for every property the app-wide `input, select`
+         base rule sets (padding, border, min-height, margin-bottom,
+         background, appearance) — without these, that global rule was
+         winning on every property this class didn't already touch,
+         wrapping each range handle in its own invisible 1.5px bordered,
+         padded, 46px-tall box. That box was the actual "double border"
+         being seen — not a duplicated container element. */
+      position: absolute; left: 0; top: 12px; width: 100%; height: 10px;
+      margin: 0; padding: 0; border: 0; min-height: 0;
+      background: transparent; pointer-events: none;
+      -webkit-appearance: none; appearance: none;
+    }
+    .dual-range input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px; border-radius: 2px; background: var(--glass-border);
+    }
+    .dual-range input[type="range"]:first-of-type::-webkit-slider-runnable-track {
+      background: transparent;
+    }
+    .dual-range input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; pointer-events: auto;
+      width: 20px; height: 20px; margin-top: -8px; border-radius: 50%;
+      background: var(--brand); border: 2px solid var(--surface, #1a1a1a);
+      box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: grab;
+    }
+    .dual-range input[type="range"]::-moz-range-track {
+      height: 4px; border-radius: 2px; background: var(--glass-border);
+    }
+    .dual-range input[type="range"]:first-of-type::-moz-range-track { background: transparent; }
+    .dual-range input[type="range"]::-moz-range-thumb {
+      pointer-events: auto; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--brand); border: 2px solid var(--surface, #1a1a1a);
+      box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: grab;
+    }
