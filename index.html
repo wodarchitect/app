@@ -1185,6 +1185,19 @@
           </button>
 
           <div id="results" class="hidden-el">
+            <div class="metric-card" id="resERaw-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span class="unit" data-i18n="hist.modal.eraw.title" style="margin-bottom:0;">"unit">eRaw Efficiency</span>
+                <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Work / Strain</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
+                  <span id="resERaw" style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">0</span>
+                  <span class="metric-unit" id="resERawUnit"></span>
+                </div>
+                <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;" id="resERawSentence"></div>
+              </div>
+            </div>
             <div class="grid-2" style="gap:10px;margin-bottom:12px;">
               <div class="metric-card" id="resPD-card">
                 <span class="unit" data-i18n="result.total.power">"unit">Power</span>
@@ -1215,16 +1228,16 @@
                 <div class="bm-bar-wrap" id="bm-wd"></div>
               </div>
               <div class="metric-card">
-                <span class="unit" data-i18n="result.total.mc">"unit">Total Metabolic Cost</span>
+                <span class="unit" data-i18n="result.cardio.strain">"unit">Cardio Strain</span>
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                  <div>
+                  <div style="min-width:0;">
                     <div style="display:flex;align-items:baseline;gap:6px;">
-                      <span class="metric-val" id="resMC">0</span>
-                      <span class="metric-unit">kcal</span>
+                      <span class="metric-val" id="resMetMinutes">0</span>
+                      <span class="metric-unit">MET-min</span>
                     </div>
-                    <div id="resMetMinutes" style="font-size:.68rem;color:var(--label);margin-top:2px;"></div>
+                    <div style="font-size:.68rem;color:var(--label);margin-top:2px;"><span id="resMC">0</span> kcal</div>
                   </div>
-                  <div id="resMC-breakdown" style="font-size:.68rem;color:var(--label);display:none;flex-direction:column;gap:5px;flex-shrink:0;"></div>
+                  <div id="resMC-breakdown" style="font-size:.68rem;color:var(--label);display:none;flex-direction:column;gap:5px;min-width:0;"></div>
                 </div>
                 <div class="bm-bar-wrap" id="bm-mc"></div>
               </div>
@@ -1236,15 +1249,13 @@
                 </div>
                 <div class="bm-bar-wrap" id="bm-fb"></div>
               </div>
-              <div class="metric-card" id="resRL-card" style="display:none;">
-                <span class="unit" data-i18n="result.rel.load">"unit">Relative Loading</span>
-                <div style="display:flex;align-items:baseline;gap:6px;">
-                  <span class="metric-val" id="resRL">0%</span>
-                  <span class="metric-unit" id="resRL-movement"></span>
+              <div class="metric-card" id="resRL-card" style="display:none;justify-content:space-between;">
+                <div>
+                  <span class="unit" data-i18n="result.tech.demand">"unit">Technical Demand</span>
+                  <div class="metric-val" id="resTD" style="color:#00E676;">—</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
-                  <span style="font-size:.62rem;color:var(--label);" data-i18n="result.actual.td">Technical Demand</span>
-                  <span id="resTD" style="font-size:.72rem;font-weight:800;padding:1px 7px;border-radius:10px;background:var(--glass-inner);">—</span>
+                <div style="font-size:.68rem;color:var(--label);margin-top:8px;">
+                  <span id="resRL">0%</span> <span id="resRL-movement"></span>
                 </div>
                 <div class="bm-bar-wrap" id="bm-rl"></div>
               </div>
@@ -1262,6 +1273,11 @@
                 <div style="display:flex;flex-direction:column;gap:14px;padding-top:4px;">
 
                   <div>
+                    <div style="font-size:.72rem;font-weight:900;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;" data-i18n="result.eraw.lbl">eRaw Efficiency</div>
+                    <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.eraw.desc">How much output you got per unit of cardiovascular strain (MET-min). For sessions with real mechanical work, it's kJ per MET-min — every unit of cardio strain, how much physical work did it buy you. For pure-cardio sessions (running or double-unders, nothing loaded), it's meters or reps per MET-min instead, since there's no mechanical work to divide by. Compare the same modality across sessions to see if you're getting more done for the same physiological cost — that's what "efficiency" means here.</div>
+                  </div>
+
+                  <div>
                     <div style="font-size:.72rem;font-weight:900;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;" data-i18n="result.intensity.lbl">Mechanical Power (W/kg)</div>
                     <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.intensity.desc">Average power output relative to your bodyweight. Calculated as total mechanical work divided by session duration and mass. High = short intense session. Low = long aerobic session. Compare across sessions over time to track fitness gains.</div>
                   </div>
@@ -1277,8 +1293,8 @@
                   </div>
 
                   <div>
-                    <div style="font-size:.72rem;font-weight:900;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;" data-i18n="result.mc.lbl">Metabolic Cost (kcal)</div>
-                    <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.mc.desc">Total estimated energy cost, combining three sources: mechanical work (barbell/bodyweight movements, using a 22% muscular-efficiency factor), dedicated cardio (run/row/bike/ski, from your own pace data), and Overhead — the extra cardiovascular cost your RPE indicates beyond what those two already explain. Useful for energy expenditure tracking and nutrition planning.</div>
+                    <div style="font-size:.72rem;font-weight:900;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;" data-i18n="result.mc.lbl">Cardio Strain (MET-min)</div>
+                    <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.mc.desc">Total accumulated metabolic volume — cardio intensity carried across the whole session's duration, not just the average. Grows with time even at constant intensity, unlike the average MET figure above. The card also shows total estimated energy cost (kcal), combining mechanical work (barbell/bodyweight movements, ~22% muscular-efficiency factor), dedicated cardio (run/row/bike/ski, from your own pace data), and Overhead — the extra cardiovascular cost your RPE indicates beyond what those two already explain.</div>
                   </div>
 
                   <div>
@@ -1293,7 +1309,7 @@
 
                   <div>
                     <div style="font-size:.72rem;font-weight:900;color:var(--brand);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;" data-i18n="result.td.lbl">Technical Demand (1–5)</div>
-                    <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.td.desc">Rep-weighted average skill complexity across all movements you completed. 1 = basic bodyweight movements. 5 = elite Olympic lifts. High scores require full concentration — avoid technically complex sessions when heavily fatigued or sleep-deprived. Shown as a badge inside the Relative Loading card rather than its own card.</div>
+                    <div style="font-size:.76rem;color:var(--text);line-height:1.6;" data-i18n="result.td.desc">Rep-weighted average skill complexity across all movements you completed. 1 = basic bodyweight movements. 5 = elite Olympic lifts. High scores require full concentration — avoid technically complex sessions when heavily fatigued or sleep-deprived. Shown as the hero value on its own card, with Relative Loading (above) as the supporting detail.</div>
                   </div>
 
                 </div>
@@ -1989,6 +2005,9 @@
     </div>
     <div id="chart-fs-canvas-wrap">
       <canvas id="chart-fs-canvas"></canvas>
+    </div>
+    <div id="chart-fs-banister-resetzoom-wrap" style="display:none;padding:8px 20px 0;">
+      <button onclick="_banisterResetZoom()" style="width:auto;margin:0;box-sizing:border-box;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.66rem;font-weight:700;">↺ Reset Zoom</button>
     </div>
     <div id="movbias-legend-table" style="display:none;margin:10px 20px 0;"></div>
     <div id="movbias-insight-card" style="display:none;margin:10px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;">
