@@ -1601,7 +1601,7 @@ function calculateGlobalPhysics() {
       // tonight's Gemini-doc review for why these are deliberately kept
       // as two separate numbers, not one metric doing both jobs.
       const _metMinEl = document.getElementById('resMetMinutes');
-      if (_metMinEl) _metMinEl.innerText = _cvResult.metMinutes ? `${Math.round(_cvResult.metMinutes)} MET-min` : '';
+      if (_metMinEl) _metMinEl.innerText = _cvResult.metMinutes ? Math.round(_cvResult.metMinutes) : '0';
       // %HRR — real Karvonen formula ((session avg HR − resting HR) /
       // (HR max − resting HR)) whenever the session has real measured
       // HR AND the profile's Resting HR / HR Max fields are both set —
@@ -1638,7 +1638,7 @@ function calculateGlobalPhysics() {
     } else {
       _aeroCard.style.display = 'none';
       const _metMinEl = document.getElementById('resMetMinutes');
-      if (_metMinEl) _metMinEl.innerText = ''; // now lives in the always-visible MC card, so it needs its own explicit clear here — unlike before, it no longer disappears automatically when the aero card hides
+      if (_metMinEl) _metMinEl.innerText = '0'; // now the card's own hero value (Cardio Strain), so it needs an explicit zero here rather than blanking — unlike before, an empty hero number would look broken instead of just disappearing
     }
   }
   window._lastCVEndurance = _cvResult || null; // full object (met + metMinutes), not just met — the session radar needs both
@@ -1675,7 +1675,7 @@ function calculateGlobalPhysics() {
     const hasCardioPRs = ['pr-run400','pr-run5k','pr-row500','pr-row2k','pr-ski500','pr-bike','pr-du']
       .some(id => parseInt(document.getElementById(id)?.value) > 0);
     const overheadKcalDisp = window._lastOverheadKcal || 0;
-    const overheadLabelText = vo2maxIsEstimate ? `Overhead (~est.)` : `Overhead (est.)`;
+    const overheadLabelText = vo2maxIsEstimate ? `Over (~est.)` : `Over (est.)`;
     // Check if overhead is unavailable due to insufficient history
     const hist2 = getHistory();
     const sixWeeksAgo2 = new Date(Date.now() - 42*24*60*60*1000);
@@ -1683,10 +1683,14 @@ function calculateGlobalPhysics() {
     const sessionsNeeded = Math.max(0, 5 - recentPD2.length);
     const overheadPending = vo2max && sessionsNeeded > 0;
     const overheadNoVO2 = !vo2max;
-    // Small colored-dot row, matching a single breakdown line's label + value
-    const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
+    // Small colored-dot row, matching a single breakdown line's label +
+    // value. No white-space:nowrap and short labels (Mech/Aero/Over) —
+    // this card is now narrower (hero + breakdown split side-by-side),
+    // so an unbreakable "Mechanical: 49 kcal" line would overflow the
+    // same way History's equivalent card did before that got fixed.
+    const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
     if (cardioKcal > 0 || overheadKcalDisp > 0 || overheadPending || overheadNoVO2) {
-      let rows = [dotRow('var(--brand)', `Mechanical: ${mechKcal} kcal`), dotRow('var(--success)', `Aerobic: ${cardioKcal} kcal`)];
+      let rows = [dotRow('var(--brand)', `Mech: ${mechKcal} kcal`), dotRow('var(--success)', `Aero: ${cardioKcal} kcal`)];
       if (overheadKcalDisp > 0) rows.push(dotRow('#3B82F6', `${overheadLabelText}: ${overheadKcalDisp} kcal`));
       if (overheadPending) rows.push(dotRow('#3B82F6', `${t('overhead.pending.1')} ${sessionsNeeded} ${t('overhead.pending.2')}`));
       if (overheadNoVO2) rows.push(dotRow('#3B82F6', t('overhead.no.vo2')));
@@ -1761,6 +1765,58 @@ function calculateGlobalPhysics() {
 
   // Calculate and display energy profile
   calculateMovementPatternProfile();
+
+  // eRaw banner — sources workKJ (tw) and metMinutes (window._lastCVEndurance)
+  // from values ALREADY computed live above, rather than re-deriving them
+  // through the reconstruction path getEngineScoreERaw/getSessionCVEndurance
+  // use for saved entries — that path exists for reconstructing a session
+  // from storage after the fact, and re-running it here risks drifting
+  // from what this exact calculation just produced. Only run/DU distance
+  // needs the lightweight preview-entry technique below (same one
+  // renderSessionMatchSection uses just after this), since that number
+  // isn't otherwise available as a single live variable.
+  {
+    const eRawCard = document.getElementById('resERaw-card');
+    const eRawVal = document.getElementById('resERaw');
+    const eRawUnit = document.getElementById('resERawUnit');
+    const eRawSentence = document.getElementById('resERawSentence');
+    let eRawDisplay = null;
+    const liveMetMinutes = window._lastCVEndurance ? window._lastCVEndurance.metMinutes : 0;
+    if (liveMetMinutes) {
+      let runMeters = 0, duReps = 0;
+      try {
+        const previewEntry = { blocks: serializeBlocksForTemplate(), cardioIntervalSummary: (typeof _buildCardioIntervalSummary === 'function' ? _buildCardioIntervalSummary() : null) };
+        (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(previewEntry) : []).forEach(inst => {
+          if (inst.cardioType === 'run') runMeters += inst.totalM;
+          if (inst.cardioType === 'du') duReps += inst.totalM; // totalM is a rep count for DU, not meters
+        });
+      } catch (e) {}
+      let modality = null;
+      if (tw > 0) modality = 'MIXED';
+      else if (runMeters > 0) modality = 'LOCO_RUN';
+      else if (duReps > 0) modality = 'LOCO_DU';
+      if (modality === 'MIXED') {
+        const v = tw / liveMetMinutes;
+        eRawDisplay = { value: v, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${v.toFixed(2)} kJ of mechanical work.` };
+      } else if (modality === 'LOCO_RUN') {
+        const v = runMeters / liveMetMinutes;
+        eRawDisplay = { value: v, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${v.toFixed(1)} meters of distance.` };
+      } else if (modality === 'LOCO_DU') {
+        const v = duReps / liveMetMinutes;
+        eRawDisplay = { value: v, unitLabel: 'reps / MET-min', sentence: `Every MET-min yielded ${v.toFixed(1)} reps.` };
+      }
+    }
+    if (eRawCard) {
+      if (eRawDisplay) {
+        eRawVal.innerText = eRawDisplay.value.toFixed(2);
+        eRawUnit.innerText = eRawDisplay.unitLabel;
+        eRawSentence.innerText = eRawDisplay.sentence;
+        eRawCard.style.display = '';
+      } else {
+        eRawCard.style.display = 'none';
+      }
+    }
+  }
 
   // Find and render comparable prior sessions using the just-computed data.
   // Uses "now" as the date so every history entry correctly counts as prior

@@ -2,7 +2,7 @@
    PHYSICS RECONSTRUCTION
    Re-derives physics values from a saved history entry (or
    live builder state) rather than trusting stored fields
-   directly — powers history/analytics display, the E_raw
+   directly — powers history/analytics display, the eRaw
    calculation, and Movement Pattern reconstruction.
 ════════════════════════════════════════════════════ */
 
@@ -250,7 +250,7 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
   return { workKJ: totalWorkKJ, tonnage: totalTonnage, loadedWorkKJ, unloadedWorkKJ, mechCostKJ: totalMechCostKJ, totalReps, mechCostByBlock, cardioCarvedKcal };
 }
 
-// ══ E_raw modality classification (Session Coverage Workbench) ══
+// ══ eRaw modality classification (Session Coverage Workbench) ══
 // ModalityClass is based on real external work output, not a telemetry
 // tag — Row/Ski have real W_ext and count as MIXED; Run/DU have zero
 // W_ext by deliberate decision and count as LOCO, using a throughput
@@ -258,7 +258,7 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
 //
 // LOCO further splits into LOCO_RUN (distance-based, m/s) vs LOCO_DU
 // (rep-based, reps/s) — these are different units and must never be
-// compared against each other, or an E_raw comparison would be
+// compared against each other, or an eRaw comparison would be
 // comparing apples to oranges. Distance takes priority if a session has
 // both real running and DU — matches getEngineScoreERaw's own priority
 // order.
@@ -269,10 +269,14 @@ function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
   return null; // neither present — can't classify at all
 }
 
-// ══ E_raw calculation (Session Coverage Workbench) ══
-// E_raw (MIXED, W_ext > 0):        W_ext (kJ) / Cardio Strain (MET-min)
-// E_raw (LOCO_RUN, distance > 0):  v_avg (m/s) / Average METs
-// E_raw (LOCO_DU, reps > 0):       cadence (reps/s) / Average METs
+// ══ eRaw calculation (Session Coverage Workbench) ══
+// eRaw (MIXED, W_ext > 0):        W_ext (kJ) / Cardio Strain (MET-min)
+// eRaw (LOCO_RUN, distance > 0):  Distance (m) / Cardio Strain (MET-min)
+// eRaw (LOCO_DU, reps > 0):       Reps / Cardio Strain (MET-min) — not
+//   part of the two archetypes the athlete specified (Hybrid/Strength,
+//   Pure Cardio-by-distance); extended the same distance/MET-min pattern
+//   to reps since DU has no meters to measure, kept in its own bucket so
+//   it's never compared against LOCO_RUN's different unit.
 // Entry-compatible — works for both historical backfill and live use,
 // same pattern as reconstructMechanicalWork/getSessionCVEndurance.
 //
@@ -282,8 +286,8 @@ function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
 // they only get used when there's no distance-based movement to measure
 // at all. This closes the earlier gap where a pure-DU LOCO session had
 // no measurable throughput and silently returned null — it now uses
-// cadence (reps/sec) instead, its own distinct bucket (LOCO_DU) keeping
-// it from ever being compared against LOCO_RUN's different units.
+// reps instead, its own distinct bucket (LOCO_DU) keeping it from ever
+// being compared against LOCO_RUN's different units.
 function getEngineScoreERaw(entry) {
   const bw = parseFloat(entry.bw) || 0;
   const totalSec = parseFloat(entry.duration_sec) || 0;
@@ -309,15 +313,31 @@ function getEngineScoreERaw(entry) {
     return { eRaw, modality, forceBias, totalSec, workKJ, metMinutes: cvResult.metMinutes };
   }
   if (modality === 'LOCO_RUN') {
-    const vAvg = runMeters / runSec;
-    return { eRaw: vAvg / cvResult.met, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
+    return { eRaw: runMeters / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
   }
   // LOCO_DU
-  const cadence = duReps / duSec;
-  return { eRaw: cadence / cvResult.met, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
+  return { eRaw: duReps / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
 }
 
-// Captures this session's E_raw (and the two absolute physics values it
+// Display helper for the eRaw banner (History Modal, and anywhere else
+// that wants the same hero value + unit + plain-English sentence rather
+// than the raw {eRaw, modality, ...} object) — one place that maps
+// modality to its unit label and sentence, so the banner and any future
+// consumer can't drift out of sync with each other.
+function getERawDisplay(entry) {
+  const r = getEngineScoreERaw(entry);
+  if (!r) return null;
+  if (r.modality === 'MIXED') {
+    return { value: r.eRaw, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(2)} kJ of mechanical work.` };
+  }
+  if (r.modality === 'LOCO_RUN') {
+    return { value: r.eRaw, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} meters of distance.` };
+  }
+  // LOCO_DU — not one of the two specified archetypes; same pattern, reps instead of meters.
+  return { value: r.eRaw, unitLabel: 'reps / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} reps.` };
+}
+
+// Captures this session's eRaw (and the two absolute physics values it
 // was derived from) onto the entry at save time. This replaced Engine
 // Score's bucket/percentile scoring system entirely once the Session
 // Coverage Workbench shipped as its permanent, physics-backed

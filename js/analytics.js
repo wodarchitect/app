@@ -136,7 +136,7 @@ function calcTrainingLoad(history) {
   let ctl = CTL_SEED, atl = CTL_SEED;
   const firstDate = new Date(sorted[0].date); firstDate.setHours(0,0,0,0);
   const days = Math.round((today - firstDate) / 86400000) + 1;
-  const chartData = [], tsbHistory = [];
+  const chartData = [], fullChartData = [], tsbHistory = [];
 
   // Separate rolling intensity histories — 28-day window, min 5 sessions each
   const cardioIntHistory = [], mixedIntHistory = [];
@@ -174,11 +174,18 @@ function calcTrainingLoad(history) {
     ctl = ctl + kCTL * (load - ctl);
     atl = atl + kATL * (load - atl);
     const ratio = ctl > 0 ? atl/ctl : 1;
+    // fullChartData carries every day back to the athlete's very first
+    // recorded session — chartData (last 42 days only) stays exactly as
+    // it was, still used for the compact inline card. Only the
+    // fullscreen chart uses fullChartData, so panning/zooming there can
+    // actually reveal history beyond the initial 6-week view instead of
+    // panning into empty space past the end of a truncated dataset.
+    fullChartData.push({date:k, ctl:+ctl.toFixed(1), atl:+atl.toFixed(1), tsb:+ratio.toFixed(2)});
     if (i >= days-42) chartData.push({date:k, ctl:+ctl.toFixed(1), atl:+atl.toFixed(1), tsb:+ratio.toFixed(2)});
     tsbHistory.push(+ratio.toFixed(2));
   }
   const finalRatio = ctl > 0 ? +(atl/ctl).toFixed(1) : 1.0;
-  return {ctl:+ctl.toFixed(0), atl:+atl.toFixed(0), tsb:finalRatio, chartData, tsbHistory, lastDayIndex:days, firstDateStr:localDateStr(firstDate), trainingDayCount:trainingDayLoads.length};
+  return {ctl:+ctl.toFixed(0), atl:+atl.toFixed(0), tsb:finalRatio, chartData, fullChartData, tsbHistory, lastDayIndex:days, firstDateStr:localDateStr(firstDate), trainingDayCount:trainingDayLoads.length};
 }
 
 function getTrainingStatus(tl, goal) {
@@ -289,7 +296,7 @@ function renderTrainingLoad() {
     if (chartInstances.trainingLoad) { try{chartInstances.trainingLoad.destroy();}catch(e){} }
     const cd=tl.chartData;
     _fsChartData = _fsChartData || {};
-    _fsChartData.banister = { chartData: cd, ctl: tl.ctl, atl: tl.atl, tsb: tl.tsb, tsbColor };
+    _fsChartData.banister = { chartData: cd, fullChartData: tl.fullChartData, ctl: tl.ctl, atl: tl.atl, tsb: tl.tsb, tsbColor };
     const gc=isDark?'rgba(255,255,255,.1)':'rgba(0,0,0,.08)', lc=isDark?'#9CA3AF':'#6B7280', gc2=isDark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
     chartInstances.trainingLoad=new Chart(canvas, {
       type:'line', data:{labels:cd.map(d=>{const dt=new Date(d.date);return (dt.getMonth()+1)+'/'+dt.getDate();}),
@@ -374,7 +381,14 @@ function renderPowerScatterChart(canvasId) {
         y: +aero.metMinutes.toFixed(1),
         allReal: aero.allReal,
         label: w.label || 'Session',
-        date: (w.date || '').slice(0, 10)
+        date: (w.date || '').slice(0, 10),
+        // Needed by the insight grid's Efficiency at Load column —
+        // eRaw isn't derivable from x/y alone (it needs the entry's own
+        // mechanical work in kJ, not the W/kg power value plotted
+        // here), so the original entry has to come along for
+        // getERawDisplay() to call on both the tapped point and
+        // whichever frontier point anchors its comparison.
+        entry: w
       };
     })
     .filter(Boolean);
@@ -518,7 +532,18 @@ function renderPowerScatterChart(canvasId) {
         } : { display: false },
         tooltip: {
           callbacks: { label: ctx => `${ctx.raw.label} (${ctx.raw.date}): Mech=${ctx.raw.x} W/kg, Load=${ctx.raw.y} MET-min${ctx.raw.allReal ? '' : ' (est.)'}` }
-        }
+        },
+        // Pinch/pan/wheel — fullscreen only, same custom handlers
+        // already proven on the Workbench's FB/Duration chart, reused
+        // directly since they're generic (parameterized by canvas +
+        // instKey, not hardcoded to that one chart). wheel.enabled
+        // stays off for the same reason as everywhere else this
+        // pattern's used: the plugin's own wheel handling can't tell a
+        // trackpad swipe from a pinch.
+        zoom: isFullscreen ? {
+          pan: { enabled: true, mode: 'xy' },
+          zoom: { pinch: { enabled: true }, wheel: { enabled: false }, mode: 'xy' }
+        } : undefined
       },
       onClick: isFullscreen ? (evt, elements) => {
         if (!elements.length) return;
@@ -540,6 +565,19 @@ function renderPowerScatterChart(canvasId) {
   if (isFullscreen) {
     window._psCurrentPoints = points;
     window._psCurrentFrontier = frontierPoints;
+    // Stashed after creation (not before — need the auto-computed
+    // initial min/max, since neither axis has a hardcoded max) so
+    // _powerScatterResetZoom() can restore exactly this without relying
+    // on chartjs-plugin-zoom's own resetZoom(), which doesn't reliably
+    // track state set by the manual wheel/touch handlers below — same
+    // issue found and fixed for the Banister chart.
+    const _chart = chartInstances[instKey];
+    _chart._psInitialRange = {
+      xMin: _chart.scales.x.min, xMax: _chart.scales.x.max,
+      yMin: _chart.scales.y.min, yMax: _chart.scales.y.max
+    };
+    _fbDurationWireTrackpadPan(canvas, instKey);
+    _fbDurationWireTouchGestures(canvas, instKey);
   }
 }
 
@@ -3557,15 +3595,148 @@ function _hideAllChartSpecificUI() {
   const ids = [
     'scatter-insight-card', 'peakload-insight-card', 'totalwork-insight-card',
     'chart-fs-totalwork-trend', 'kcal-insight-card', 'chart-fs-kcal-avg',
-    'movbias-legend-table', 'movbias-insight-card'
+    'movbias-legend-table', 'movbias-insight-card', 'chart-fs-banister-resetzoom-wrap'
   ];
   ids.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  // Undo any touch-action override _wireBanisterTouchAndWheel left behind —
+  // #chart-fs-canvas is shared across every chart this generic opener
+  // renders, so a banister-only override left in place would silently
+  // block normal touch/scroll behavior on whatever chart opens next.
+  const _fsCanvas = document.getElementById('chart-fs-canvas');
+  if (_fsCanvas) _fsCanvas.style.touchAction = '';
+}
+
+// Custom wheel/touch pan+zoom for the Banister (Aerobic Fitness 6-week
+// trend) chart — same technique already proven on the Session Coverage
+// Workbench's scatter chart: chartjs-plugin-zoom's own wheel.enabled
+// can't distinguish a trackpad swipe from a pinch (both arrive as plain
+// wheel events), and its touch support was never independently
+// verified, so both are replaced with manual handlers here too.
+//
+// #chart-fs-canvas is shared across every chart type this generic
+// opener renders (banister, peakload, profile, etc.), and the DOM
+// element itself is reused rather than recreated each time — so these
+// listeners are wired ONCE per canvas lifetime (guarded by
+// canvas._banisterWired) but check window._fsCurrentChartKey at the
+// moment each event actually fires, not just at wire-time. Without
+// that check, panning the Banister chart once would leave live
+// listeners quietly intercepting gestures on every other chart opened
+// afterward through the same canvas.
+function _wireBanisterTouchAndWheel(canvas) {
+  if (!canvas) return;
+  canvas.style.touchAction = 'none';
+  if (canvas._banisterWired) return;
+  canvas._banisterWired = true;
+
+  const isActive = () => window._fsCurrentChartKey === 'banister' && _fsChartInstance;
+
+  canvas.addEventListener('wheel', (e) => {
+    if (!isActive()) return;
+    const chart = _fsChartInstance;
+    if (!chart.scales?.x) return;
+    e.preventDefault();
+    const xScale = chart.scales.x;
+    const xRange = xScale.max - xScale.min;
+    const xPixels = chart.chartArea.width || 1;
+    if (e.ctrlKey) {
+      // Pinch-to-zoom on a trackpad — browsers report this as wheel+ctrlKey.
+      const zoomFactor = e.deltaY < 0 ? 0.92 : 1.08;
+      const mid = (xScale.min + xScale.max) / 2;
+      const halfRange = xRange / 2 * zoomFactor;
+      chart.options.scales.x.min = mid - halfRange;
+      chart.options.scales.x.max = mid + halfRange;
+    } else {
+      // Two-finger trackpad swipe — pan along time only. This chart's
+      // whole point is panning back through history, and CTL/ATL (left
+      // y-axis) and TSB (a SEPARATE, hardcoded 0-3 right y-axis) can't
+      // both be panned/zoomed consistently on the same Y gesture anyway
+      // — that mismatch was exactly why the green TSB line looked
+      // "stuck" while the others stretched. X-only sidesteps that
+      // entirely rather than trying to keep two different Y scales in
+      // sync.
+      const xShift = ((e.deltaX || e.deltaY) / xPixels) * xRange;
+      chart.options.scales.x.min = xScale.min + xShift;
+      chart.options.scales.x.max = xScale.max + xShift;
+    }
+    chart.update('none');
+  }, { passive: false });
+
+  let touchState = null;
+  const dist = (t0, t1) => Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (!isActive()) { touchState = null; return; }
+    const chart = _fsChartInstance;
+    if (!chart.scales?.x) return;
+    if (e.touches.length === 2) {
+      touchState = { mode: 'pinch', startDist: dist(e.touches[0], e.touches[1]), xMin0: chart.scales.x.min, xMax0: chart.scales.x.max };
+    } else if (e.touches.length === 1) {
+      touchState = { mode: 'pending', startX: e.touches[0].clientX, xMin0: chart.scales.x.min, xMax0: chart.scales.x.max };
+    } else {
+      touchState = null;
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (!isActive() || !touchState) return;
+    const chart = _fsChartInstance;
+    const xRange0 = touchState.xMax0 - touchState.xMin0;
+    const xPixels = chart.chartArea.width || 1;
+    if (touchState.mode === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const newDist = dist(e.touches[0], e.touches[1]) || 1;
+      const scale = touchState.startDist / newDist;
+      const midVal = (touchState.xMin0 + touchState.xMax0) / 2;
+      const halfRange = xRange0 / 2 * scale;
+      chart.options.scales.x.min = midVal - halfRange;
+      chart.options.scales.x.max = midVal + halfRange;
+      chart.update('none');
+    } else if ((touchState.mode === 'pending' || touchState.mode === 'pan') && e.touches.length === 1) {
+      const dx = e.touches[0].clientX - touchState.startX;
+      if (touchState.mode === 'pending') {
+        if (Math.abs(dx) < 8) return; // still just a tap so far
+        touchState.mode = 'pan';
+      }
+      e.preventDefault();
+      const xShift = -(dx / xPixels) * xRange0;
+      chart.options.scales.x.min = touchState.xMin0 + xShift;
+      chart.options.scales.x.max = touchState.xMax0 + xShift;
+      chart.update('none');
+    }
+  }, { passive: false });
+
+  const endTouch = () => { touchState = null; };
+  canvas.addEventListener('touchend', endTouch, { passive: true });
+  canvas.addEventListener('touchcancel', endTouch, { passive: true });
+}
+
+// Deliberately does NOT call chart.resetZoom() (chartjs-plugin-zoom's
+// own method) — that method resets whatever the PLUGIN's own gesture
+// handlers tracked as "zoomed," but every pan/zoom here happens through
+// direct chart.options.scales.x mutation instead (see
+// _wireBanisterTouchAndWheel above), completely bypassing the plugin's
+// pan()/zoom() API. The plugin never sees those changes as a zoom to
+// undo, which is exactly why Reset Zoom did nothing. Resetting to the
+// exact min/max this chart was actually created with — stashed on the
+// chart instance itself right after construction — sidesteps the
+// plugin's tracking entirely and just always works.
+function _banisterResetZoom() {
+  const chart = _fsChartInstance;
+  if (!chart || !chart._banisterInitialRange) return;
+  chart.options.scales.x.min = chart._banisterInitialRange.min;
+  chart.options.scales.x.max = chart._banisterInitialRange.max;
+  chart.update('none');
 }
 
 function openChartFullscreen(title, key) {
   const fs = document.getElementById('chart-fullscreen');
   document.getElementById('chart-fs-title').textContent = title;
   fs.classList.add('open');
+  // Tracked so the shared #chart-fs-canvas's pan/zoom wheel and touch
+  // handlers (wired once, reused across every chart type this opener
+  // renders) can check which chart is actually showing right now before
+  // acting — see _wireBanisterTouchAndWheel's own comment for why.
+  window._fsCurrentChartKey = key;
 
   if (_fsChartInstance) { try { _fsChartInstance.destroy(); } catch(e) {} _fsChartInstance = null; }
 
@@ -3704,29 +3875,66 @@ function openChartFullscreen(title, key) {
 
   if (key === 'banister' && _fsChartData?.banister) {
     const bd = _fsChartData.banister;
-    const cd = bd.chartData;
+    // Full history, not the 6-week-truncated array the compact inline
+    // card uses — this is what actually lets panning reveal anything:
+    // the chart's own dataset needs to contain the earlier days, not
+    // just have its viewport nudged toward data that was never loaded.
+    // Falls back to the truncated array only if an older cached
+    // _fsChartData object (from before this existed) is still in memory.
+    const fd = bd.fullChartData || bd.chartData;
     const isDark = document.body.classList.contains('dark');
     const gc2 = isDark?'rgba(255,255,255,.08)':'rgba(0,0,0,.07)';
     const lc = isDark?'#9CA3AF':'#6B7280';
     // Add explanation content
     if (expEl) expEl.innerHTML = getChartExplanation('banister');
     wrap.style.height = '280px';
+    const resetZoomWrap = document.getElementById('chart-fs-banister-resetzoom-wrap');
+    if (resetZoomWrap) resetZoomWrap.style.display = 'block';
     setTimeout(() => {
       const canvas = document.getElementById('chart-fs-canvas');
+      // Opens showing the same last-42-day window as before (via the
+      // x-axis's initial min/max, set as an index range on this
+      // category scale) — the difference is the full history now
+      // actually exists in the dataset behind it, so panning left or
+      // zooming out reveals real data instead of empty space. Reset
+      // Zoom restores exactly this same starting window, since
+      // chartjs-plugin-zoom's resetZoom() returns to whatever scale
+      // config the chart was created with.
+      const initialMin = Math.max(0, fd.length - 42);
+      const initialMax = fd.length - 1;
       _fsChartInstance = new Chart(canvas, {
-        type:'line', data:{labels:cd.map(d=>{const dt=new Date(d.date);return (dt.getMonth()+1)+'/'+dt.getDate();}),
+        type:'line', data:{labels:fd.map(d=>{const dt=new Date(d.date);return (dt.getMonth()+1)+'/'+dt.getDate();}),
           datasets:[
-            {label:'CTL', data:cd.map(d=>d.ctl), borderColor:'#3B82F6', backgroundColor:(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,'#3B82F655');g.addColorStop(1,'#3B82F600');return g;}, fill:true, borderWidth:3, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y'},
-            {label:'ATL', data:cd.map(d=>d.atl), borderColor:'#F59E0B', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y'},
-            {label:'TSB', data:cd.map(d=>d.tsb), borderColor:'#22C55E', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y2'}
+            {label:'CTL', data:fd.map(d=>d.ctl), borderColor:'#3B82F6', backgroundColor:(ctx)=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,ctx.chart.height);g.addColorStop(0,'#3B82F655');g.addColorStop(1,'#3B82F600');return g;}, fill:true, borderWidth:3, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y'},
+            {label:'ATL', data:fd.map(d=>d.atl), borderColor:'#F59E0B', backgroundColor:'transparent', borderWidth:2.5, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y'},
+            {label:'TSB', data:fd.map(d=>d.tsb), borderColor:'#22C55E', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:0.4, spanGaps:true, yAxisID:'y2'}
           ]},
-        options:{responsive:true, maintainAspectRatio:false, animation:{duration:400}, plugins:{legend:{display:false}},
+        options:{responsive:true, maintainAspectRatio:false, animation:{duration:400}, plugins:{
+          legend:{display:false},
+          // Same approach as the Session Coverage Workbench's scatter
+          // chart: chartjs-plugin-zoom's own wheel.enabled treats every
+          // wheel event as zoom (can't tell a trackpad swipe from a
+          // pinch), and its touch support was never independently
+          // verified — so wheel.enabled stays off here too, and
+          // _wireBanisterTouchAndWheel (called below, after this chart
+          // exists) replaces both with the same custom handlers already
+          // proven working for the Workbench.
+          zoom: {
+            pan: { enabled: true, mode: 'x' },
+            zoom: { pinch: { enabled: true }, wheel: { enabled: false }, mode: 'x' }
+          }
+        },
           scales:{
-            x:{grid:{color:gc2,drawBorder:false},border:{display:false},ticks:{color:lc,font:{size:9},maxTicksLimit:7}},
+            x:{min:initialMin, max:initialMax, grid:{color:gc2,drawBorder:false},border:{display:false},ticks:{color:lc,font:{size:9},maxTicksLimit:7}},
             y:{grid:{color:gc2,drawBorder:false},border:{display:false},ticks:{color:lc,font:{size:9}},position:'left',title:{display:true,text:t('tl.fitness')+'/'+t('tl.fatigue'),color:lc,font:{size:8}}},
             y2:{grid:{display:false},border:{display:false},ticks:{color:'#22C55E99',font:{size:9}},position:'right',min:0,max:3,title:{display:true,text:t('tl.form'),color:'#22C55E99',font:{size:8}}}
           }}
       });
+      // Stashed for _banisterResetZoom() — see that function's own
+      // comment for why it reads this instead of calling the plugin's
+      // resetZoom().
+      _fsChartInstance._banisterInitialRange = { min: initialMin, max: initialMax };
+      _wireBanisterTouchAndWheel(canvas);
     }, 50);
     return;
   }
@@ -3778,6 +3986,25 @@ function openChartFullscreen(title, key) {
     cfg.options.responsive = true;
     cfg.options.plugins.tooltip = _fsChartData.scatter.options.plugins.tooltip;    // Calculate midpoints from data
     const pts = _fsChartData.scatter.data.datasets[0].data;
+    const isDark = document.body.classList.contains('dark');
+    window._scatterSelectedPoint = null;
+    // Re-attached after the JSON clone above for the same reason
+    // tooltip/onClick are re-attached below — functions don't survive
+    // JSON.stringify. Both datasets keep their original coloring logic
+    // (history: filled/outline by allReal; latest: solid orange) and
+    // add one more case on top: the tapped point renders white, the
+    // same selected-state treatment the Power Scatter and FB/Duration
+    // charts already use.
+    cfg.data.datasets[0].backgroundColor = ctx => {
+      if (ctx.raw && ctx.raw === window._scatterSelectedPoint) return '#FFFFFF';
+      return ctx.raw?.allReal
+        ? (isDark ? 'rgba(96,165,250,0.75)' : 'rgba(59,130,246,0.7)')
+        : 'transparent';
+    };
+    cfg.data.datasets[1].backgroundColor = ctx => {
+      if (ctx.raw && ctx.raw === window._scatterSelectedPoint) return '#FFFFFF';
+      return '#FF6B35';
+    };
     const avgX = pts.length ? pts.reduce((a,b) => a + b.x, 0) / pts.length : 0;
     const avgY = pts.length ? pts.reduce((a,b) => a + b.y, 0) / pts.length : 0;
     // Quadrant training-split percentages — combines BOTH datasets
@@ -3856,7 +4083,38 @@ function openChartFullscreen(title, key) {
         ctx.restore();
       }
     };
-    cfg.plugins = [quadrantPlugin];
+    // Orange ring around the selected point — same crisp, fixed-stroke
+    // treatment (not a blurred glow, which can bleed onto neighboring
+    // points in dense clusters) already used on the Power Scatter and
+    // FB/Duration charts. Ring radius scales with each point's own
+    // bubble size (this is a 'bubble' chart, unlike those two — points
+    // aren't a uniform size here, since dot size itself encodes
+    // Mechanical Work), so the ring stays proportionate rather than a
+    // fixed pixel radius that would look wrong on a large vs small dot.
+    const selectedGlowPlugin = {
+      id: 'scatterSelectedGlow',
+      beforeDatasetsDraw(chart) {
+        const sel = window._scatterSelectedPoint;
+        if (!sel) return;
+        for (let dsIdx = 0; dsIdx < chart.data.datasets.length; dsIdx++) {
+          const meta = chart.getDatasetMeta(dsIdx);
+          if (!meta || !meta.data) continue;
+          const idx = chart.data.datasets[dsIdx].data.indexOf(sel);
+          if (idx < 0 || !meta.data[idx]) continue;
+          const el = meta.data[idx];
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(el.x, el.y, (sel.r || 7) + 6, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,107,53,0.85)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.restore();
+          return; // a point exists in exactly one dataset — done once found
+        }
+      }
+    };
+    cfg.plugins = [quadrantPlugin, selectedGlowPlugin];
     // Click handler — added here, not in the base scatterCfg, since
     // onClick is a function and wouldn't survive the JSON.parse(
     // JSON.stringify()) clone above anyway (same reason the tooltip
@@ -3865,7 +4123,9 @@ function openChartFullscreen(title, key) {
       if (!elements.length) return;
       const el = elements[0];
       const point = cfg.data.datasets[el.datasetIndex].data[el.index];
+      window._scatterSelectedPoint = point;
       _updateScatterInsightCard(point, avgX, avgY);
+      _fsChartInstance.update();
     };
     wrap.style.height = '300px';
     setTimeout(() => {
@@ -3878,7 +4138,13 @@ function openChartFullscreen(title, key) {
       const historyPts = cfg.data.datasets[0]?.data;
       const defaultPoint = (latestPts && latestPts.length) ? latestPts[latestPts.length - 1]
         : (historyPts && historyPts.length) ? historyPts[historyPts.length - 1] : null;
+      // Highlighted immediately, matching the insight card that already
+      // auto-populates for this same default point — previously the
+      // card showed a session but nothing on the chart indicated which
+      // dot it was.
+      window._scatterSelectedPoint = defaultPoint;
       _updateScatterInsightCard(defaultPoint, avgX, avgY);
+      _fsChartInstance.update();
     }, 50);
     return;
   }

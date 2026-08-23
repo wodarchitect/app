@@ -1,7 +1,7 @@
 /* ════════════════════════════════════════════════════
    SESSION COVERAGE WORKBENCH
    Session-matching (gate thresholds, bidirectional match
-   finding), the E_raw progression timeline, the comparable-
+   finding), the eRaw progression timeline, the comparable-
    sessions table, and the FB/Duration chart that hosts all
    of it — including its MET-color gradient and per-target
    ring highlighting.
@@ -485,7 +485,7 @@ function _selectWorkbenchTarget(entry) {
   renderWorkbenchMatchTable(entry);
 }
 
-// E_raw Progression Timeline — X=Date, Y=E_raw, per spec. Uses the
+// eRaw Progression Timeline — X=Date, Y=eRaw, per spec. Uses the
 // bi-directional matcher (past AND future sessions relative to the
 // target) so the line traces efficiency progression in both
 // directions, not just how the athlete got to this session. Recomputes
@@ -512,7 +512,7 @@ function renderErawTimelineChart(targetEntry) {
   const targetResult = getEngineScoreERaw(targetEntry);
   if (!targetResult) {
     section.style.display = '';
-    if (targetEl) targetEl.textContent = t('workbench.timeline.no.target.eraw') || 'E_raw not computable for this session';
+    if (targetEl) targetEl.textContent = t('workbench.timeline.no.target.eraw') || 'eRaw not computable for this session';
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
@@ -556,13 +556,13 @@ function renderErawTimelineChart(targetEntry) {
       responsive: true, maintainAspectRatio: false,
       scales: {
         x: { grid: { color: gc }, ticks: { color: lc, font: { size: 9 } } },
-        y: { title: { display: true, text: 'E_raw (kJ / MET-min)', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc } }
+        y: { title: { display: true, text: 'eRaw (kJ / MET-min)', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc } }
       },
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: { label: ctx => {
           const r = rows[ctx.dataIndex];
-          return `${r.label}${r.isTarget ? ' (Target)' : ` (${r.direction})`}: E_raw=${r.eRaw.toFixed(3)}`;
+          return `${r.label}${r.isTarget ? ' (Target)' : ` (${r.direction})`}: eRaw=${r.eRaw.toFixed(3)}`;
         } } }
       }
     }
@@ -571,7 +571,7 @@ function renderErawTimelineChart(targetEntry) {
 
 // Comparable Sessions Table — pinned target row + every matched session
 // (past and future), per spec's exact column set. Delta vs Target is
-// E_raw-based (% difference from the target's own E_raw), since that's
+// eRaw-based (% difference from the target's own eRaw), since that's
 // the metric this whole comparison exists to trace.
 // Table 1 ("Comparable Sessions" — did these sessions qualify as
 // structural twins?): FB Gap, Duration/Work-Rep/Mech-Share similarity,
@@ -582,9 +582,9 @@ function renderErawTimelineChart(targetEntry) {
 // from what actually decided a session counted as a match.
 //
 // Table 2 ("Additional Physical Context" — how efficient was the
-// physical output?): E_raw, its delta vs the target, and the absolute
+// physical output?): eRaw, its delta vs the target, and the absolute
 // physical numbers (mechanical work, cardio strain, average MET,
-// locomotion distance) that E_raw itself is built from. Deliberately
+// locomotion distance) that eRaw itself is built from. Deliberately
 // separate from Table 1 — gate similarity and physical efficiency are
 // two different questions, and conflating them in one wide table was
 // the original problem this split fixes. Collapsed by default via
@@ -715,7 +715,7 @@ function renderWorkbenchMatchTable(targetEntry) {
             <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
-              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw') || 'E_raw'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw') || 'eRaw'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.mechwork') || 'Mech. Work (kJ)'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.cardiostrain') || 'Cardio Strain (MET-min)'}</th>
@@ -1654,7 +1654,7 @@ function openFbDurationFullscreen() {
   wrap.style.alignItems = '';
   // Section order (per athlete request): Gate Thresholds first — they
   // define what counts as a "match" for everything below — then the
-  // Coverage Cloud scatter plot itself, then the Target Summary -> E_raw
+  // Coverage Cloud scatter plot itself, then the Target Summary -> eRaw
   // Progression -> Comparable Sessions Table, in that reading order,
   // once a point on the scatter plot has actually been tapped.
   wrap.innerHTML = `
@@ -1710,7 +1710,7 @@ function openFbDurationFullscreen() {
       <div id="fbd-insight-match" style="font-size:.7rem;color:var(--label);padding-top:8px;border-top:1px solid var(--glass-border);"></div>
     </div>
     <div id="workbench-timeline-section" style="display:none;margin:16px 20px 0;padding-top:14px;border-top:1px solid var(--glass-border);">
-      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('workbench.timeline.title') || 'Efficiency Progression (E_raw)'}</div>
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('workbench.timeline.title') || 'Efficiency Progression (eRaw)'}</div>
       <div style="font-size:.72rem;color:var(--label);margin-bottom:6px;line-height:1.5;">${t('workbench.timeline.subtitle') || 'Matched Twins Timeline'}</div>
       <div id="workbench-timeline-target" style="font-size:.65rem;color:var(--label);margin-bottom:6px;"></div>
       <div style="position:relative;height:220px;"><canvas id="chart-eraw-timeline"></canvas></div>
@@ -1780,13 +1780,11 @@ function openPowerScatterFullscreen() {
   wrap.style.flexDirection = '';
   wrap.style.alignItems = '';
   wrap.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;padding:12px 20px 0;">
+      <button onclick="_powerScatterResetZoom()" style="width:auto;margin:0;box-sizing:border-box;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.66rem;font-weight:700;">↺ Reset Zoom</button>
+    </div>
     <div style="position:relative;height:340px;padding:12px 20px 0;"><canvas id="chart-power-scatter-fs"></canvas></div>
-    <div id="ps-insight-card" style="display:none;margin:10px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;">
-      <div id="ps-insight-title" style="font-size:.82rem;font-weight:700;color:var(--text);margin-bottom:8px;">—</div>
-      <div id="ps-insight-metrics" style="font-size:.7rem;color:var(--label);margin-bottom:8px;"></div>
-      <div id="ps-insight-delta" style="font-size:.7rem;color:var(--label);"></div>
-      <div id="ps-insight-classification" style="display:none;font-size:.7rem;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid var(--glass-border);"></div>
-    </div>`;
+    <div id="ps-insight-card" style="display:none;margin:16px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;"></div>`;
 
   const expEl = document.getElementById('chart-fs-explanation');
   if (expEl) {
@@ -1796,6 +1794,25 @@ function openPowerScatterFullscreen() {
   }
 
   renderPowerScatterChart('chart-power-scatter-fs');
+}
+
+// Doesn't call chart.resetZoom() (chartjs-plugin-zoom's own method) —
+// same reasoning as Banister's reset: every pan/zoom here happens via
+// direct chart.options.scales mutation in the reused
+// _fbDurationWireTrackpadPan/_fbDurationWireTouchGestures handlers,
+// bypassing the plugin's own pan()/zoom() API entirely, so the plugin
+// never tracks these changes as a "zoom" to undo. Restoring the exact
+// min/max stashed on the chart right after creation (see
+// renderPowerScatterChart) sidesteps that and just always works.
+function _powerScatterResetZoom() {
+  const chart = chartInstances.powerScatter_fs;
+  if (!chart || !chart._psInitialRange) return;
+  const r = chart._psInitialRange;
+  chart.options.scales.x.min = r.xMin;
+  chart.options.scales.x.max = r.xMax;
+  chart.options.scales.y.min = r.yMin;
+  chart.options.scales.y.max = r.yMax;
+  chart.update('none');
 }
 
 function _fbDurationFsUpdate() {
@@ -1888,67 +1905,124 @@ function _updateFbDurationZoneCard() {
 
 // Shared by both the persistent card's efficiency delta and the dot
 // color-coding below — one calculation, not the same logic written
-// twice in two places that could drift apart. Finds the frontier's own
-// value at a given Power level: the highest-Power frontier point still
-// <= pointX, matching the stepped-before semantics the chart itself
-// draws (frontier holds each point's Load until Power reaches the
-// next one).
-function _psFindFrontierAtPower(pointX, frontierPoints) {
-  let frontierAtPower = null;
-  for (const fp of frontierPoints || []) {
-    if (fp.x <= pointX) frontierAtPower = fp; else break; // frontierPoints sorted ascending by x
+// twice in two places that could drift apart.
+//
+// Finds the frontier's max Power (X) achieved at this session's own
+// Load (Y) level or higher — the correct read of "how close to your
+// historical best were you," since the frontier is a Pareto frontier:
+// by construction, Y is non-increasing as X increases (a higher-Power
+// frontier point can never also have equal-or-higher Load, or the
+// lower-Power point wouldn't be on the frontier at all). That
+// monotonicity is exactly what makes walking ascending-by-X and taking
+// the last point whose Y still clears the target valid — once a
+// point's Y drops below it, no later (higher-X) point can climb back
+// above it.
+//
+// This replaces an earlier, inverted version that looked up the
+// frontier's max Load at this session's Power — which answered "how
+// much load did you sustain relative to the most anyone's ever
+// sustained at this power," not "how close was this session's power to
+// your peak." Higher load at the same power is *lower* efficiency, not
+// higher, so that version was measuring the wrong thing entirely.
+//
+// Returns the full anchor POINT (not just its Power value) — the
+// 3-card insight grid needs that point's own label/date too ("Anchored
+// by [session]"), not just its x.
+function _psFindFrontierAnchorAtLoad(pointY, frontierPoints) {
+  let anchor = null;
+  for (const fp of frontierPoints || []) { // sorted ascending by x
+    if (fp.y >= pointY) anchor = fp; else break;
   }
-  return frontierAtPower;
+  return anchor;
 }
 
 // Returns 0-100+ (a point ON the frontier is exactly 100 by
-// definition, forced explicitly rather than relying on the y/y
+// definition, forced explicitly rather than relying on the x/x
 // division landing on precisely 100 due to floating point), or null
-// when there's no frontier value at this Power level to compare
-// against at all (Power below every frontier point).
+// when there's no frontier value at this Load level to compare against
+// at all (Load above every frontier point — can happen at the very
+// low-Power end, where the frontier's highest Load values live).
 function _psFrontierPct(point, frontierPoints) {
   if ((frontierPoints || []).includes(point)) return 100; // reference equality — frontierPoints shares object references with the full point set
-  const frontierAtPower = _psFindFrontierAtPower(point.x, frontierPoints);
-  if (!frontierAtPower || frontierAtPower.y <= 0) return null;
-  return Math.round((point.y / frontierAtPower.y) * 100);
+  const anchor = _psFindFrontierAnchorAtLoad(point.y, frontierPoints);
+  if (!anchor || anchor.x <= 0) return null;
+  return Math.round((point.x / anchor.x) * 100);
 }
 
-// Persistent inspector card for the Mechanical Power / Internal Load
-// chart. Efficiency delta compares the tapped session's Load against
-// the frontier's OWN value at that same Power level — found by walking
-// the frontier (sorted ascending by Power) for the highest-Power point
-// still <= the tapped session's Power, matching the stepped-before
-// semantics the chart itself draws (the frontier holds each point's
-// Load until Power reaches the next one). If the tapped session's
-// Power is below every frontier point, there's no meaningful frontier
-// value to compare against yet, so no delta is shown rather than a
-// fabricated one.
+// 3-card Physics Insight Grid beneath the Engine Frontier chart —
+// Frontier Capacity (the corrected %, see _psFrontierPct above), the
+// raw Power gap to the frontier's anchor point at this same Load level,
+// and the minimum Power needed to actually set a NEW frontier point
+// here (not just tie the existing one — tying it wouldn't expand the
+// envelope, so this adds one display-precision step, 0.01 W/kg, beyond
+// whatever's needed to close the gap).
 function _updatePowerScatterInsightCard(point, allPoints, frontierPoints) {
   const card = document.getElementById('ps-insight-card');
   if (!card || !point) { if (card) card.style.display = 'none'; return; }
   card.style.display = '';
 
-  document.getElementById('ps-insight-title').textContent = `${point.label} — ${point.date}`;
-  document.getElementById('ps-insight-metrics').innerHTML =
-    `<strong style="color:var(--text);">${point.x}</strong> W/kg | <strong style="color:var(--text);">${point.y}</strong> MET-min${point.allReal ? '' : ' (est.)'}`;
-
-  const deltaEl = document.getElementById('ps-insight-delta');
+  const anchor = _psFindFrontierAnchorAtLoad(point.y, frontierPoints);
   const pct = _psFrontierPct(point, frontierPoints);
-  if (pct != null) {
-    deltaEl.textContent = `${pct}% ${t('chart.powerscatter.ofFrontier') || 'of Historical Frontier Output'}`;
-  } else {
-    deltaEl.textContent = '';
-  }
-
-  const classEl = document.getElementById('ps-insight-classification');
   const isFrontier = (frontierPoints || []).includes(point);
-  if (isFrontier) {
-    classEl.style.display = '';
-    classEl.textContent = t('chart.powerscatter.frontierpr') || 'Peak Aerobic Power PR — on the Engine Frontier';
-    classEl.style.color = '#F5C518';
-  } else {
-    classEl.style.display = 'none';
-  }
+
+  const pctStr = pct != null ? `${pct}%` : '—';
+  const capacitySub = (anchor && pct != null)
+    ? `${point.x.toFixed(2)} W/kg output vs ${anchor.x.toFixed(2)} W/kg historical peak power at ${point.y} MET-min load.`
+    : t('chart.powerscatter.nofrontier') || 'No frontier data at this Load level yet.';
+  const frontierBadge = isFrontier
+    ? `<div style="font-size:.62rem;font-weight:700;color:#F5C518;margin-top:4px;">${t('chart.powerscatter.frontierpr') || 'Peak Aerobic Power PR — on the Engine Frontier'}</div>`
+    : '';
+
+  const gap = anchor ? +(point.x - anchor.x).toFixed(2) : null;
+  const gapNumStr = gap != null ? `${gap >= 0 ? '+' : ''}${gap.toFixed(2)}` : '—';
+  const gapUnitStr = gap != null ? 'W/kg' : '';
+  const gapSub = anchor
+    ? `${t('chart.powerscatter.anchoredby') || 'Anchored by'} ${anchor.label} (${anchor.date}).`
+    : '';
+
+  // Efficiency at Load — this session's own eRaw next to the frontier
+  // anchor's, both at the SAME Load level the rest of this card is
+  // already comparing at. getERawDisplay() needs the original history
+  // entry (point.entry/anchor.entry), not the plotted x/y — eRaw is
+  // built from mechanical work in kJ, not the W/kg value on this axis.
+  let sessionERaw = null, anchorERaw = null;
+  try { sessionERaw = (typeof getERawDisplay === 'function') ? getERawDisplay(point.entry) : null; } catch (e) {}
+  try { anchorERaw = anchor ? ((typeof getERawDisplay === 'function') ? getERawDisplay(anchor.entry) : null) : null; } catch (e) {}
+  const eRawNumStr = sessionERaw ? sessionERaw.value.toFixed(2) : '—';
+  const eRawUnitStr = sessionERaw ? sessionERaw.unitLabel : '';
+  const eRawSub = anchorERaw
+    ? `${t('chart.powerscatter.anchoreraw') || 'Frontier anchor achieved'} ${anchorERaw.value.toFixed(2)} ${anchorERaw.unitLabel} ${t('chart.powerscatter.atstrain') || 'at this strain level.'}`
+    : (sessionERaw ? (t('chart.powerscatter.noanchoreraw') || 'No frontier anchor eRaw to compare against.') : (t('chart.powerscatter.noeraw') || 'eRaw not computable for this session.'));
+
+  card.innerHTML = `
+    <div style="font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:12px;">${point.label} — ${point.date}</div>
+    <div style="font-size:.7rem;color:var(--label);margin-bottom:14px;">
+      <strong style="color:var(--text);">${point.x}</strong> W/kg | <strong style="color:var(--text);">${point.y}</strong> MET-min${point.allReal ? '' : ' (est.)'}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:16px;">
+      <div style="min-width:0;">
+        <div style="font-size:.62rem;font-weight:800;color:var(--brand);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('chart.powerscatter.capacity.title') || 'Frontier Capacity'}</div>
+        <div style="font-size:1.5rem;font-weight:900;color:var(--text);line-height:1;">${pctStr}</div>
+        <div style="font-size:.62rem;color:var(--label);margin-top:6px;line-height:1.4;">${capacitySub}</div>
+        ${frontierBadge}
+      </div>
+      <div style="min-width:0;">
+        <div style="font-size:.62rem;font-weight:800;color:var(--brand);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('chart.powerscatter.gap.title') || 'Frontier Gap'}</div>
+        <div style="display:flex;align-items:baseline;gap:4px;">
+          <span style="font-size:1.5rem;font-weight:900;color:var(--text);line-height:1;">${gapNumStr}</span>
+          <span style="font-size:.68rem;font-weight:700;color:var(--label);">${gapUnitStr}</span>
+        </div>
+        <div style="font-size:.62rem;color:var(--label);margin-top:6px;line-height:1.4;">${gapSub}</div>
+      </div>
+      <div style="min-width:0;">
+        <div style="font-size:.62rem;font-weight:800;color:var(--brand);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('chart.powerscatter.eraw.title') || 'Efficiency at Load'}</div>
+        <div style="display:flex;align-items:baseline;gap:4px;">
+          <span style="font-size:1.5rem;font-weight:900;color:var(--text);line-height:1;">${eRawNumStr}</span>
+          <span style="font-size:.68rem;font-weight:700;color:var(--label);">${eRawUnitStr}</span>
+        </div>
+        <div style="font-size:.62rem;color:var(--label);margin-top:6px;line-height:1.4;">${eRawSub}</div>
+      </div>
+    </div>`;
 }
 
 // Persistent inspector card — reuses findAllSessionMatches(), the same
@@ -1972,7 +2046,7 @@ function _updateFbDurationInsightCard(point) {
       matchEl.textContent = n > 0
         ? `${n} ${n === 1 ? (t('chart.fbduration.match.one') || 'comparable session found') : (t('chart.fbduration.match.many') || 'comparable sessions found')}`
         : (t('match.none.title') || 'No comparable sessions found');
-      // Drives the Workbench's E_raw Timeline + Comparable Sessions
+      // Drives the Workbench's eRaw Timeline + Comparable Sessions
       // Table below — always selects, even with zero matches, so the
       // chart's ring state correctly clears rather than staying stuck
       // on whichever session was previously selected. The zero-matches

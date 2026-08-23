@@ -1537,73 +1537,102 @@ function openHistoryModal(idx) {
         }
         let rlContext = null;
         try { rlContext = (typeof reconstructRL === 'function') ? reconstructRL(w, null, true) : null; } catch (e) {}
-        const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
+        const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
         const mcRows = [];
-        if (w.mc_mech != null) mcRows.push(dotRow('var(--brand)', `Mechanical: ${w.mc_mech} kcal`));
-        if (w.mc_aero) mcRows.push(dotRow('var(--success)', `Aerobic: ${w.mc_aero} kcal`));
-        if (w.mc_overhead) mcRows.push(dotRow('#3B82F6', `Overhead (est.): ${w.mc_overhead} kcal`));
+        if (w.mc_mech != null) mcRows.push(dotRow('var(--brand)', `Mech: ${w.mc_mech} kcal`));
+        if (w.mc_aero) mcRows.push(dotRow('var(--success)', `Aero: ${w.mc_aero} kcal`));
+        if (w.mc_overhead) mcRows.push(dotRow('#3B82F6', `Over (est.): ${w.mc_overhead} kcal`));
 
-        return `<div class="grid-2" style="gap:10px;">
-          <div class="metric-card">
+        // Scoped to just these History Modal cards via inline style —
+        // .metric-card's orange left-accent box-shadow is shared with
+        // the live flow's own cards, which weren't asked to change.
+        const noAccent = 'box-shadow:none;';
+        // eRaw banner — computed fresh via getERawDisplay (physics-
+        // reconstruction.js), which itself calls getEngineScoreERaw and
+        // maps its modality (MIXED/LOCO_RUN/LOCO_DU) to the right unit
+        // label and plain-English sentence. Not read from a frozen
+        // saved value — same "recompute fresh" convention the rest of
+        // this modal's physics cards already follow, so this can never
+        // drift from what Table 2 in the Workbench shows for the same
+        // session.
+        let eRawDisplay = null;
+        try { eRawDisplay = (typeof getERawDisplay === 'function') ? getERawDisplay(w) : null; } catch (e) {}
+
+        return `${eRawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="unit" style="margin-bottom:0;">${t('hist.modal.eraw.title') || 'eRaw Efficiency'}</span>
+            <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Work / Strain</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
+              <span style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">${eRawDisplay.value.toFixed(2)}</span>
+              <span class="metric-unit">${eRawDisplay.unitLabel}</span>
+            </div>
+            <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${eRawDisplay.sentence}</div>
+          </div>
+        </div>` : ''}
+        <div class="grid-2" style="gap:10px;">
+          <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.total.power')}</span>
             <div style="display:flex;align-items:baseline;gap:6px;">
               <span class="metric-val" style="color:${getPDColor(pdVal)}">${pdVal.toFixed(2)}</span>
               <span class="metric-unit">W/kg</span>
             </div>
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('hist.modal.metric.pd.caption') || 'Average work rate relative to bodyweight — how fast, not how much'}</div>
           </div>
-          ${cvResult ? `<div class="metric-card">
+          ${cvResult ? `<div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.aero.power')}</span>
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-              <div>
+              <div style="min-width:0;">
                 <div style="display:flex;align-items:baseline;gap:6px;">
                   <span class="metric-val">${cvResult.met.toFixed(1)}</span>
                   <span class="metric-unit">MET</span>
                 </div>
                 ${hrrDisplay ? `<div style="font-size:.68rem;color:var(--text);margin-top:6px;">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' <span style="color:var(--label);">(est.)</span>'}</div>` : ''}
               </div>
-              ${w.avgHR != null ? `<div style="font-size:.68rem;color:var(--label);text-align:right;flex-shrink:0;">
+              ${w.avgHR != null ? `<div style="font-size:.68rem;color:var(--label);text-align:right;min-width:0;">
                 <div>Average HR: ${w.avgHR} BPM</div>
                 <div style="margin-top:2px;">Max HR: ${w.maxHR ?? '—'} BPM</div>
               </div>` : ''}
             </div>
             ${!cvResult.allReal ? `<div style="font-size:.62rem;color:var(--label);margin-top:2px;">${t('aero.power.estimated')}</div>` : ''}
           </div>` : ''}
-          <div class="metric-card">
+          <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.total.work')}</span>
             <div style="display:flex;align-items:baseline;gap:6px;">
               <span class="metric-val">${wdVal.toFixed(1)}</span>
               <span class="metric-unit">kJ</span>
             </div>
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('hist.modal.metric.wd.caption') || 'Total physical work performed — reps × weight × distance, summed'}</div>
           </div>
-          <div class="metric-card">
-            <span class="unit">${t('result.total.mc')}</span>
+          <div class="metric-card" style="${noAccent}">
+            <span class="unit">${t('result.cardio.strain')}</span>
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-              <div>
+              <div style="min-width:0;">
                 <div style="display:flex;align-items:baseline;gap:6px;">
-                  <span class="metric-val">${mcVal.toFixed(0)}</span>
-                  <span class="metric-unit">kcal</span>
+                  <span class="metric-val">${cvResult ? Math.round(cvResult.metMinutes) : 0}</span>
+                  <span class="metric-unit">MET-min</span>
                 </div>
-                ${cvResult ? `<div style="font-size:.68rem;color:var(--label);margin-top:2px;">${Math.round(cvResult.metMinutes)} MET-min</div>` : ''}
+                <div style="font-size:.68rem;color:var(--label);margin-top:2px;">${mcVal.toFixed(0)} kcal</div>
               </div>
-              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;flex-shrink:0;">${mcRows.join('')}</div>` : ''}
+              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;min-width:0;">${mcRows.join('')}</div>` : ''}
             </div>
           </div>
-          <div class="metric-card">
+          <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.force.bias2')}</span>
             <div style="display:flex;align-items:baseline;gap:6px;">
               <span class="metric-val">${fbVal.toFixed(0)}</span>
               <span class="metric-unit">kg/kJ</span>
             </div>
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('hist.modal.metric.fb.caption') || 'Load moved per unit of work — higher means heavier, slower reps'}</div>
           </div>
-          <div class="metric-card">
-            <span class="unit">${t('result.rel.load')}</span>
-            <div style="display:flex;align-items:baseline;gap:6px;">
-              <span class="metric-val">${rlVal}%</span>
-              ${rlContext?.movementName ? `<span class="metric-unit">${t('result.of.1rm')} ${rlContext.movementName}</span>` : ''}
+          <div class="metric-card" style="${noAccent}justify-content:space-between;">
+            <div>
+              <span class="unit">${t('result.tech.demand')}</span>
+              <div class="metric-val" style="color:#00E676;">${tdVal != null ? tdVal + ' / 5' : '—'}</div>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
-              <span style="font-size:.68rem;color:var(--label);">${t('result.actual.td')}</span>
-              <span style="font-size:.72rem;font-weight:800;color:${getTDLabel ? getTDLabel(tdVal || 0).color : 'var(--brand)'};">${tdVal != null ? tdVal + ' / 5' : '—'}</span>
+            <div style="font-size:.68rem;color:var(--label);margin-top:8px;">
+              ${rlVal}% ${rlContext?.movementName ? `${t('result.of.1rm')} ${rlContext.movementName}` : ''}
             </div>
           </div>
         </div>`;
