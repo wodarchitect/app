@@ -1605,12 +1605,15 @@ function _fbDurationWireTouchGestures(canvas, instKey) {
         touchState.mode = 'pan';
       }
       e.preventDefault();
-      // Same sign convention as the wheel handler's swipe-pan above
-      // (content follows the finger/gesture direction) — dragging
-      // right reveals what's to the left, dragging down reveals what's
-      // above, matching ordinary touch-scroll behavior elsewhere.
+      // X: content follows the finger (drag right reveals what's to
+      // the left), matching ordinary touch-scroll behavior.
       const xShift = -(dx / xPixels) * xRange0;
-      const yShift = -(dy / yPixels) * yRange0;
+      // Y sign flipped relative to the wheel-swipe handler's convention
+      // — confirmed inverted on real Android touch testing (finger down
+      // moved the view up). Touch drag-to-pan and trackpad swipe-to-pan
+      // are different gestures with different natural directions; they
+      // were never guaranteed to share a sign just because both pan.
+      const yShift = (dy / yPixels) * yRange0;
       chart.options.scales.x.min = touchState.xMin0 + xShift;
       chart.options.scales.x.max = touchState.xMax0 + xShift;
       chart.options.scales.y.min = touchState.yMin0 + yShift;
