@@ -235,6 +235,18 @@ window.addEventListener('beforeinstallprompt', e => {
 
 window.onload = () => {
 
+  // Register chartjs-plugin-zoom (pinch/pan/wheel zoom on the FB/Duration
+  // Workbench chart) — defensive global lookup since the UMD bundle's
+  // exposed name has varied across versions of the plugin.
+  if (typeof Chart !== 'undefined') {
+    const zoomPlugin = window['chartjs-plugin-zoom'] || window.ChartZoom || window.zoomPlugin;
+    if (zoomPlugin) {
+      try { Chart.register(zoomPlugin); } catch (e) { console.warn('[chartjs-plugin-zoom] register failed:', e); }
+    } else {
+      console.warn('[chartjs-plugin-zoom] script loaded but no recognized global found — pinch/pan zoom will be unavailable, dual-range sliders still work.');
+    }
+  }
+
   // Restore theme
   const savedTheme = localStorage.getItem('wod-theme');
   if (savedTheme !== 'light') {

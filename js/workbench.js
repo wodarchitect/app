@@ -390,27 +390,86 @@ function _wireWorkbenchControls() {
   });
 }
 
-// Wires the 4 independent FB/Duration min/max pickers that replaced the
-// old preset-bucket dropdowns — each just triggers _fbDurationFsUpdate()
-// on change, exactly like the dropdowns' onchange did, just per-bound
-// instead of per-preset-pair.
-function _wireFbDurationRangePickers() {
-  const wrap = document.getElementById('chart-fs-canvas-wrap');
-  if (!wrap) return;
-  ['fbd-fs-fbmin', 'fbd-fs-fbmax', 'fbd-fs-durmin', 'fbd-fs-durmax'].forEach(cls => {
-    const inp = wrap.querySelector('.' + cls);
-    if (!inp) return;
-    const trigger = inp.closest('.picker-trigger');
-    if (!trigger) return;
-    trigger.onclick = () => {
-      openPickerWithCallback(trigger, (val) => {
-        inp.value = val;
-        const displayEl = trigger.querySelector('.picker-trigger-val');
-        if (displayEl) displayEl.textContent = formatPickerVal(val, trigger.dataset.label);
-        _fbDurationFsUpdate();
-      });
-    };
-  });
+// Reads the chart's ACTUAL current axis bounds (post pinch/pan/wheel
+// zoom) back into the slider handles and their labels, so the two
+// controls never drift apart — dragging a slider moves the chart, and
+// pinching the chart moves the sliders, symmetrically. Chart.js/the zoom
+// plugin report undefined for an axis min/max that hasn't been
+// explicitly constrained (e.g. right after a pinch that only touched the
+// x-axis), so each falls back to the slider's own full-range default
+// rather than leaving a handle in a stale position.
+function _fbDurationSyncSlidersFromChart(chart) {
+  if (!chart) return;
+  const fbLo = document.getElementById('fbd-fs-fb-lo');
+  const fbHi = document.getElementById('fbd-fs-fb-hi');
+  const durLo = document.getElementById('fbd-fs-dur-lo');
+  const durHi = document.getElementById('fbd-fs-dur-hi');
+  if (!fbLo || !fbHi || !durLo || !durHi) return;
+  const xMin = chart.scales?.x?.min, xMax = chart.scales?.x?.max;
+  const yMin = chart.scales?.y?.min, yMax = chart.scales?.y?.max;
+  durLo.value = Math.max(0, Math.round(xMin ?? 0));
+  durHi.value = Math.min(60, Math.round(xMax ?? 60));
+  fbLo.value = Math.max(0, Math.round(yMin ?? 0));
+  fbHi.value = Math.min(200, Math.round(yMax ?? 200));
+  const fbLabel = document.getElementById('fbd-fs-fb-label');
+  const durLabel = document.getElementById('fbd-fs-dur-label');
+  if (fbLabel) fbLabel.textContent = `(${fbLo.value} – ${fbHi.value >= 200 ? '200+' : fbHi.value})`;
+  if (durLabel) durLabel.textContent = `(${durLo.value} – ${durHi.value >= 60 ? '60+' : durHi.value} min)`;
+}
+
+// Fires on every 'input' tick while a slider handle is being dragged —
+// deliberately does NOT call renderFbDurationChart (that destroys and
+// rebuilds the whole chart, recomputing match-state and wiping
+// window._fbdSelectedPoint on every tick, which would feel sluggish and
+// keep losing the current selection mid-drag). Instead it just nudges
+// the already-live chart instance's axis bounds directly and redraws
+// with Chart.js's 'none' animation mode for an instant, cheap update.
+// The real, full rebuild (which also re-applies the window/zone filters
+// and match coloring correctly) happens once on release, via the
+// existing _fbDurationFsUpdate — wired to each slider's 'change' event.
+function _fbDurationSliderLiveUpdate() {
+  const fbLo = document.getElementById('fbd-fs-fb-lo');
+  const fbHi = document.getElementById('fbd-fs-fb-hi');
+  const durLo = document.getElementById('fbd-fs-dur-lo');
+  const durHi = document.getElementById('fbd-fs-dur-hi');
+  if (!fbLo || !fbHi || !durLo || !durHi) return;
+  // Keep lo <= hi by clamping whichever handle just crossed the other,
+  // rather than letting them pass through each other while dragging.
+  if (+fbLo.value > +fbHi.value) fbLo.value = fbHi.value;
+  if (+fbHi.value < +fbLo.value) fbHi.value = fbLo.value;
+  if (+durLo.value > +durHi.value) durLo.value = durHi.value;
+  if (+durHi.value < +durLo.value) durHi.value = durLo.value;
+  const fbLabel = document.getElementById('fbd-fs-fb-label');
+  const durLabel = document.getElementById('fbd-fs-dur-label');
+  if (fbLabel) fbLabel.textContent = `(${fbLo.value} – ${+fbHi.value >= 200 ? '200+' : fbHi.value})`;
+  if (durLabel) durLabel.textContent = `(${durLo.value} – ${+durHi.value >= 60 ? '60+' : durHi.value} min)`;
+  const chart = chartInstances.fbduration_fs;
+  if (chart) {
+    chart.options.scales.x.min = +durLo.value;
+    chart.options.scales.x.max = +durHi.value >= 60 ? undefined : +durHi.value;
+    chart.options.scales.y.min = +fbLo.value;
+    chart.options.scales.y.max = +fbHi.value >= 200 ? undefined : +fbHi.value;
+    chart.update('none');
+  }
+}
+
+// Clears both the plugin's own pinch/pan/wheel zoom state AND the
+// slider-driven range filters — resetZoom() alone only knows about the
+// former, so without also resetting the sliders the two controls would
+// disagree about what's currently "zoomed."
+function _fbDurationResetZoom() {
+  const chart = chartInstances.fbduration_fs;
+  if (chart && typeof chart.resetZoom === 'function') { try { chart.resetZoom(); } catch (e) {} }
+  const fbLo = document.getElementById('fbd-fs-fb-lo');
+  const fbHi = document.getElementById('fbd-fs-fb-hi');
+  const durLo = document.getElementById('fbd-fs-dur-lo');
+  const durHi = document.getElementById('fbd-fs-dur-hi');
+  if (fbLo) fbLo.value = 0;
+  if (fbHi) fbHi.value = 200;
+  if (durLo) durLo.value = 0;
+  if (durHi) durHi.value = 60;
+  _fbDurationSliderLiveUpdate();
+  _fbDurationFsUpdate();
 }
 
 function _selectWorkbenchTarget(entry) {
@@ -497,7 +556,7 @@ function renderErawTimelineChart(targetEntry) {
       responsive: true, maintainAspectRatio: false,
       scales: {
         x: { grid: { color: gc }, ticks: { color: lc, font: { size: 9 } } },
-        y: { title: { display: true, text: 'E_raw', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc } }
+        y: { title: { display: true, text: 'E_raw (kJ / MET-min)', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc } }
       },
       plugins: {
         legend: { display: false },
@@ -514,6 +573,22 @@ function renderErawTimelineChart(targetEntry) {
 // (past and future), per spec's exact column set. Delta vs Target is
 // E_raw-based (% difference from the target's own E_raw), since that's
 // the metric this whole comparison exists to trace.
+// Table 1 ("Comparable Sessions" — did these sessions qualify as
+// structural twins?): FB Gap, Duration/Work-Rep/Mech-Share similarity,
+// and the aggregate Total Match Score across all 4 gates. Every value
+// here comes straight from the match object _evaluateSessionMatchGates
+// already computed (fbSim/fbGap/durSim/wprSim/mechShareSim/
+// selectionScore) — nothing recalculated, so this table can never drift
+// from what actually decided a session counted as a match.
+//
+// Table 2 ("Additional Physical Context" — how efficient was the
+// physical output?): E_raw, its delta vs the target, and the absolute
+// physical numbers (mechanical work, cardio strain, average MET,
+// locomotion distance) that E_raw itself is built from. Deliberately
+// separate from Table 1 — gate similarity and physical efficiency are
+// two different questions, and conflating them in one wide table was
+// the original problem this split fixes. Collapsed by default via
+// <details> since it's supplementary context, not the primary read.
 function renderWorkbenchMatchTable(targetEntry) {
   const container = document.getElementById('workbench-match-table');
   if (!container) return;
@@ -528,32 +603,91 @@ function renderWorkbenchMatchTable(targetEntry) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   };
 
-  const buildRow = (entry, isTarget, direction) => {
-    const wpr = getSessionWorkPerRep(entry);
-    const mechShare = getSessionMechShare(entry);
-    const r = getEngineScoreERaw(entry);
-    const eRaw = r ? r.eRaw : null;
-    const delta = (!isTarget && eRaw != null && targetEraw) ? ((eRaw - targetEraw) / targetEraw * 100) : null;
-    return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
-      <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
-      <td style="padding:6px 8px;white-space:nowrap;">${(entry.date || '').slice(0, 10)}</td>
-      <td style="padding:6px 8px;text-align:right;">${entry.fb != null ? Math.round(parseFloat(entry.fb)) : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;">${fmtMinSec(entry.duration_sec)}</td>
-      <td style="padding:6px 8px;text-align:right;">${wpr != null ? wpr.toFixed(2) : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;">${mechShare != null ? Math.round(mechShare) + '%' : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;">${eRaw != null ? eRaw.toFixed(3) : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;${delta != null ? (delta >= 0 ? 'color:#22C55E;' : 'color:#EF4444;') : ''}">${isTarget ? '—' : (delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—')}</td>
-    </tr>`;
-  };
-
   // All rows — target included — sorted together by date, rather than
   // always pinning the target first regardless of where its date
   // actually falls chronologically among the matches.
   const allRows = [
-    { entry: targetEntry, isTarget: true, direction: 'target' },
-    ...matches.map(m => ({ entry: m.session, isTarget: false, direction: m.direction }))
+    { entry: targetEntry, isTarget: true, m: null },
+    ...matches.map(m => ({ entry: m.session, isTarget: false, m }))
   ].sort((a, b) => new Date(a.entry.date) - new Date(b.entry.date));
-  const rowsHtml = allRows.map(r => buildRow(r.entry, r.isTarget, r.direction)).join('');
+
+  const buildGateRow = (row) => {
+    const { entry, isTarget, m } = row;
+    // Signed, not absolute — m.fbGap is the unsigned value the gate
+    // itself thresholds on; this is purely for display, showing which
+    // direction the candidate's FB sits relative to the target's.
+    const fbGapSigned = isTarget ? null : (parseFloat(entry.fb) - parseFloat(targetEntry.fb));
+    const fbGapStr = isTarget ? '—' : `${fbGapSigned >= 0 ? '+' : ''}${Math.round(fbGapSigned)} pts`;
+    // Three-tier match-quality color, applied consistently regardless of
+    // dark/light mode since these are semantic quality colors, not
+    // theme-derived ones (matches the fixed hex approach the MET
+    // gradient legend already uses elsewhere on this chart).
+    let scoreColor = '#9CA3AF'; // below 80% — muted gray
+    if (!isTarget) {
+      if (m.selectionScore >= 90) scoreColor = '#10B981';
+      else if (m.selectionScore >= 80) scoreColor = '#F59E0B';
+    }
+    return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
+      <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
+      <td style="padding:6px 8px;white-space:nowrap;">${(entry.date || '').slice(0, 10)}</td>
+      <td style="padding:6px 8px;text-align:right;">${fbGapStr}</td>
+      <td style="padding:6px 8px;text-align:right;">${isTarget ? '—' : Math.round(m.durSim) + '%'}</td>
+      <td style="padding:6px 8px;text-align:right;">${isTarget ? '—' : Math.round(m.wprSim) + '%'}</td>
+      <td style="padding:6px 8px;text-align:right;">${isTarget ? '—' : Math.round(m.mechShareSim) + '%'}</td>
+      <td style="padding:6px 8px;text-align:right;font-weight:700;${isTarget ? '' : `color:${scoreColor};`}">${isTarget ? '—' : Math.round(m.selectionScore) + '% Match'}</td>
+    </tr>`;
+  };
+
+  const buildContextRow = (row, showRunCol) => {
+    const { entry, isTarget } = row;
+    const r = getEngineScoreERaw(entry);
+    const eRaw = r ? r.eRaw : null;
+    const delta = (!isTarget && eRaw != null && targetEraw) ? ((eRaw - targetEraw) / targetEraw * 100) : null;
+    const cv = getSessionCVEndurance(entry);
+    const wdVal = parseFloat(entry.wd);
+    // Relative Load — entry.rl is already this session's avg %1RM
+    // (Relative Loading, same field the live/History physics cards
+    // show), not recalculated here.
+    const rlVal = (entry.rl !== undefined && entry.rl !== null) ? entry.rl : null;
+    // BW Work (%) — entry.bw_work_pct is already saved as exactly
+    // (Bodyweight Mechanical Work / Total Mechanical Work) * 100 (see
+    // migrateBwWorkPct in migrations.js), so this is that value
+    // directly, not recalculated.
+    const bwPct = (entry.bw_work_pct !== undefined && entry.bw_work_pct !== null) ? parseFloat(entry.bw_work_pct) : null;
+    let runCol = '';
+    if (showRunCol) {
+      // Real toggle-recorded meters only (isReal) — a PR-pace estimate
+      // isn't "what happened," so it's excluded rather than shown as if
+      // measured.
+      const runInstances = (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(entry) : [])
+        .filter(i => i.cardioType === 'run' && i.isReal);
+      const runM = runInstances.length ? runInstances.reduce((s, i) => s + i.totalM, 0) : null;
+      runCol = `<td style="padding:6px 8px;text-align:right;">${runM != null ? Math.round(runM) + 'm' : '—'}</td>`;
+    }
+    return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
+      <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
+      <td style="padding:6px 8px;white-space:nowrap;">${(entry.date || '').slice(0, 10)}</td>
+      <td style="padding:6px 8px;text-align:right;">${eRaw != null ? eRaw.toFixed(3) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;${delta != null ? (delta >= 0 ? 'color:#22C55E;' : 'color:#EF4444;') : ''}">${isTarget ? '—' : (delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—')}</td>
+      <td style="padding:6px 8px;text-align:right;">${!isNaN(wdVal) ? wdVal.toFixed(1) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;">${cv ? Math.round(cv.metMinutes) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;">${cv ? cv.met.toFixed(1) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;">${rlVal != null ? rlVal + '%' : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;">${bwPct != null ? Math.round(bwPct) + '%' : '—'}</td>
+      ${runCol}
+    </tr>`;
+  };
+
+  const gateRowsHtml = allRows.map(buildGateRow).join('');
+  // Run Distance only earns a column at all if at least one row in this
+  // matched cluster (target included) actually has real Run toggle
+  // data — otherwise every cell in it would read '—', which isn't
+  // worth a whole column's width on a mobile table.
+  const showRunCol = allRows.some(row => {
+    const instances = (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(row.entry) : []);
+    return instances.some(i => i.cardioType === 'run' && i.isReal);
+  });
+  const contextRowsHtml = allRows.map(row => buildContextRow(row, showRunCol)).join('');
 
   container.innerHTML = `
     <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.table.title') || 'Comparable Sessions'}</div>
@@ -563,16 +697,37 @@ function renderWorkbenchMatchTable(targetEntry) {
           <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
             <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
             <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.fb') || 'FB'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.duration') || 'Duration'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.workrep') || 'Work/Rep'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.mechshare') || 'Mech Share'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw') || 'E_raw'}</th>
-            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
+            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.fbgap') || 'FB Gap'}</th>
+            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.dursim') || 'Duration Sim.'}</th>
+            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.wprsim') || 'Work/Rep Sim.'}</th>
+            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.mechsim') || 'Mech Share Sim.'}</th>
+            <th style="padding:6px 8px;text-align:right;">${t('workbench.table.totalscore') || 'Total Match Score'}</th>
           </tr>
         </thead>
-        <tbody>${rowsHtml}</tbody>
+        <tbody>${gateRowsHtml}</tbody>
       </table>
+    </div>
+    <div style="margin-top:16px;">
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.table.context.title') || 'Additional Physical Context'}</div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:.72rem;color:var(--text);">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
+              <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
+              <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw') || 'E_raw'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.mechwork') || 'Mech. Work (kJ)'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.cardiostrain') || 'Cardio Strain (MET-min)'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.avgmet') || 'Avg MET'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.relload') || 'Relative Load'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.bwwork') || 'BW Work (%)'}</th>
+              ${showRunCol ? `<th style="padding:6px 8px;text-align:right;">${t('workbench.table.locomotion') || 'Run Distance'}</th>` : ''}
+            </tr>
+          </thead>
+          <tbody>${contextRowsHtml}</tbody>
+        </table>
+      </div>
     </div>`;
 }
 
@@ -1273,11 +1428,32 @@ function renderFbDurationChart(canvasId, filters) {
       responsive: true, maintainAspectRatio: false,
       scales: {
         x: { title: { display: true, text: t('chart.fbduration.x'), color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc }, min: durRange ? durRange[0] : undefined, max: (durRange && durRange[1] < 999) ? durRange[1] : undefined },
-        y: { title: { display: true, text: t('chart.fbduration.y'), color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc }, min: fbRange ? fbRange[0] : undefined, max: (fbRange && fbRange[1] < 999) ? fbRange[1] : undefined }
+        y: { title: { display: true, text: 'Force Bias (kg/kJ)', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc }, min: fbRange ? fbRange[0] : undefined, max: (fbRange && fbRange[1] < 999) ? fbRange[1] : undefined }
       },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `${ctx.raw.label} (${ctx.raw.date}): FB=${ctx.raw.y}, ${ctx.raw.x}min${ctx.raw.met != null ? `, ${ctx.raw.met.toFixed(1)} MET` : ''}` } }
+        tooltip: { callbacks: { label: ctx => `${ctx.raw.label} (${ctx.raw.date}): FB=${ctx.raw.y}, ${ctx.raw.x}min${ctx.raw.met != null ? `, ${ctx.raw.met.toFixed(1)} MET` : ''}` } },
+        // Pinch (touch) and click-drag pan (mouse) — fullscreen only.
+        // wheel.enabled is deliberately OFF here: chartjs-plugin-zoom's
+        // own wheel handler treats every wheel event as zoom regardless
+        // of ctrlKey, which is exactly why a macOS trackpad two-finger
+        // swipe (reported to the browser as a plain wheel event) was
+        // being captured as zoom instead of pan, with no way to pan via
+        // trackpad at all. _fbDurationWireTrackpadPan (called right
+        // after this chart is constructed) replaces wheel-zoom with a
+        // manual handler that discriminates the two gestures itself —
+        // see that function's own comment for the ctrlKey convention it
+        // relies on.
+        zoom: isFullscreen ? {
+          pan: { enabled: true, mode: 'xy' },
+          zoom: {
+            pinch: { enabled: true },
+            wheel: { enabled: false },
+            mode: 'xy',
+            onZoomComplete: ({ chart }) => _fbDurationSyncSlidersFromChart(chart)
+          },
+          onPanComplete: ({ chart }) => _fbDurationSyncSlidersFromChart(chart)
+        } : undefined
       },
       onClick: isFullscreen ? (evt, elements) => {
         if (!elements.length) return;
@@ -1291,12 +1467,66 @@ function renderFbDurationChart(canvasId, filters) {
   };
 
   chartInstances[instKey] = new Chart(canvas, cfg);
-  if (isFullscreen) window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
+  if (isFullscreen) {
+    window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
+    _fbDurationWireTrackpadPan(canvas, instKey);
+  }
+}
+
+// Manual wheel-event pan/zoom for desktop trackpads. A macOS two-finger
+// swipe and a two-finger pinch are BOTH reported to the browser as
+// 'wheel' events — the only thing that tells them apart is e.ctrlKey,
+// which browsers set to true specifically for a pinch gesture (a
+// long-standing convention, not something this app controls). Without
+// this, chartjs-plugin-zoom's own wheel.enabled treats every wheel
+// event — swipe included — as zoom, which is exactly why trackpad
+// panning wasn't reachable at all before: the swipe never got a chance
+// to be interpreted as anything else. touch-action:none (set both here
+// and in styles.css on the canvas) stops the browser from also trying
+// to scroll/navigate the page on the same gesture, which is what
+// preventDefault() below is closing the loop on.
+function _fbDurationWireTrackpadPan(canvas, instKey) {
+  if (!canvas || canvas._fbdWheelWired) return;
+  canvas._fbdWheelWired = true;
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('wheel', (e) => {
+    const chart = chartInstances[instKey];
+    if (!chart || !chart.scales?.x || !chart.scales?.y) return;
+    e.preventDefault();
+    if (e.ctrlKey) {
+      // Pinch-to-zoom — scale both axes around their current midpoint.
+      // deltaY<0 is a pinch-out (zoom in) by the same browser convention.
+      const zoomFactor = e.deltaY < 0 ? 0.92 : 1.08;
+      ['x', 'y'].forEach(axisId => {
+        const scale = chart.scales[axisId];
+        const mid = (scale.min + scale.max) / 2;
+        const halfRange = (scale.max - scale.min) / 2 * zoomFactor;
+        chart.options.scales[axisId].min = mid - halfRange;
+        chart.options.scales[axisId].max = mid + halfRange;
+      });
+    } else {
+      // Two-finger swipe — pan both axes, scaled by each axis's own
+      // pixel size so the chart tracks the finger 1:1 regardless of
+      // current zoom level. Y is inverted relative to deltaY so an
+      // upward swipe moves the view up, matching native trackpad feel.
+      const xScale = chart.scales.x, yScale = chart.scales.y;
+      const xRange = xScale.max - xScale.min, yRange = yScale.max - yScale.min;
+      const xPixels = chart.chartArea.width || 1, yPixels = chart.chartArea.height || 1;
+      const xShift = (e.deltaX / xPixels) * xRange;
+      const yShift = -(e.deltaY / yPixels) * yRange;
+      chart.options.scales.x.min = xScale.min + xShift;
+      chart.options.scales.x.max = xScale.max + xShift;
+      chart.options.scales.y.min = yScale.min + yShift;
+      chart.options.scales.y.max = yScale.max + yShift;
+    }
+    chart.update('none');
+    _fbDurationSyncSlidersFromChart(chart);
+  }, { passive: false });
 }
 
 function openFbDurationFullscreen() {
   const fs = document.getElementById('chart-fullscreen');
-  document.getElementById('chart-fs-title').textContent = t('chart.fbduration');
+  document.getElementById('chart-fs-title').textContent = 'SESSION COVERAGE WORKBENCH';
   fs.classList.add('open');
   // Same shared hide-all used by openChartFullscreen() — this function
   // has its own separate rendering path and never had access to that
@@ -1313,52 +1543,70 @@ function openFbDurationFullscreen() {
   wrap.style.height = 'auto';
   wrap.style.flexDirection = '';
   wrap.style.alignItems = '';
+  // Section order (per athlete request): Gate Thresholds first — they
+  // define what counts as a "match" for everything below — then the
+  // Coverage Cloud scatter plot itself, then the Target Summary -> E_raw
+  // Progression -> Comparable Sessions Table, in that reading order,
+  // once a point on the scatter plot has actually been tapped.
   wrap.innerHTML = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 20px 0;">
-      <select id="fbd-fs-window" onchange="_fbDurationFsUpdate()" style="flex:1;min-width:100px;font-size:.72rem;background:var(--surface2);color:var(--label);border:1px solid var(--glass-border);border-radius:8px;padding:6px 8px;">
-        <option value="7">${t('chart.window.week')}</option>
-        <option value="30">${t('chart.window.month')}</option>
-        <option value="182">${t('chart.window.6month')}</option>
-        <option value="365">${t('chart.window.year')}</option>
-        <option value="all" selected>${t('chart.window.all')}</option>
-      </select>
-      <div style="flex:1;min-width:100px;">${makePicker('fbd-fs-fbmin', 0, Array.from({length: 41}, (_, i) => i*5), 'FB min')}</div>
-      <div style="flex:1;min-width:100px;">${makePicker('fbd-fs-fbmax', 999, [...Array.from({length: 41}, (_, i) => i*5), 999], 'FB max')}</div>
-      <div style="flex:1;min-width:100px;">${makePicker('fbd-fs-durmin', 0, Array.from({length: 61}, (_, i) => i), 'Duration min')}</div>
-      <div style="flex:1;min-width:100px;">${makePicker('fbd-fs-durmax', 999, [...Array.from({length: 61}, (_, i) => i), 999], 'Duration max')}</div>
+    <div style="padding:14px 20px 0;">
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.controls.title') || 'Gate Thresholds (FB Gap | Duration % | Work/Rep % | Mech %)'}</div>
+      <div id="workbench-controls"></div>
     </div>
-    <div style="position:relative;height:340px;padding:12px 20px 0;"><canvas id="chart-fbduration-fs"></canvas></div>
+    <div style="margin:18px 20px 0;padding-top:16px;border-top:1px solid var(--glass-border);">
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">${t('workbench.cloud.title') || 'Coverage Cloud'}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <select id="fbd-fs-window" onchange="_fbDurationFsUpdate()" style="width:auto;margin:0;flex:0 0 auto;height:26px;min-height:26px;box-sizing:border-box;font-size:.62rem;font-weight:700;background:var(--card-bg) url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236B7280%22 stroke-width=%222%22><polyline points=%226,9 12,15 18,9%22/></svg>') no-repeat right 5px center;background-size:11px;-webkit-appearance:none;appearance:none;color:var(--text);border:1px solid var(--glass-border);border-radius:6px;padding:6px 18px 6px 10px;white-space:nowrap;">
+          <option value="7">${t('chart.window.week')}</option>
+          <option value="30">${t('chart.window.month')}</option>
+          <option value="182">${t('chart.window.6month')}</option>
+          <option value="365">${t('chart.window.year')}</option>
+          <option value="all" selected>${t('chart.window.all')}</option>
+        </select>
+        <button id="fbd-fs-gaps-toggle" onclick="_fbDurationToggleGaps()" style="width:auto;margin:0;flex:0 0 auto;box-sizing:border-box;padding:6px 12px;white-space:nowrap;border-radius:6px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.62rem;font-weight:700;">${t('chart.fbduration.showgaps') || 'Show Gaps'}</button>
+        <select id="fbd-fs-zone" onchange="_fbDurationZoneChange()" style="width:auto;margin:0;flex:0 0 auto;height:26px;min-height:26px;box-sizing:border-box;font-size:.62rem;font-weight:700;background:var(--card-bg) url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236B7280%22 stroke-width=%222%22><polyline points=%226,9 12,15 18,9%22/></svg>') no-repeat right 5px center;background-size:11px;-webkit-appearance:none;appearance:none;color:var(--text);border:1px solid var(--glass-border);border-radius:6px;padding:6px 18px 6px 10px;white-space:nowrap;">
+          <option value="">${t('chart.fbduration.zone.none') || 'No Target Zone'}</option>
+          <option value="maximal_power">${t('chart.fbduration.zone.mp') || 'Maximal Power'}</option>
+          <option value="heavy_metcon">${t('chart.fbduration.zone.hm') || 'Heavy Metcon'}</option>
+          <option value="strength_endurance">${t('chart.fbduration.zone.se') || 'Strength Endurance'}</option>
+          <option value="aerobic_base">${t('chart.fbduration.zone.ab') || 'Aerobic Base'}</option>
+          <option value="anaerobic_sprint">${t('chart.fbduration.zone.as') || 'Anaerobic Sprint'}</option>
+        </select>
+        <button onclick="_fbDurationResetZoom()" style="width:auto;margin:0;flex:0 0 auto;box-sizing:border-box;padding:6px 12px;white-space:nowrap;border-radius:6px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.62rem;font-weight:700;">${t('chart.fbduration.resetzoom') || '↺ Reset'}</button>
+      </div>
+    </div>
+    <div class="dual-range-card">
+      <div class="dual-range-card-header"><span class="dual-range-card-label">${t('chart.fbduration.y')}</span><span class="dual-range-card-value" id="fbd-fs-fb-label">(0 – 200+)</span></div>
+      <div class="dual-range">
+        <input type="range" id="fbd-fs-fb-lo" min="0" max="200" step="5" value="0" oninput="_fbDurationSliderLiveUpdate()" onchange="_fbDurationFsUpdate()">
+        <input type="range" id="fbd-fs-fb-hi" min="0" max="200" step="5" value="200" oninput="_fbDurationSliderLiveUpdate()" onchange="_fbDurationFsUpdate()">
+      </div>
+    </div>
+    <div class="dual-range-card">
+      <div class="dual-range-card-header"><span class="dual-range-card-label">${t('chart.fbduration.x')}</span><span class="dual-range-card-value" id="fbd-fs-dur-label">(0 – 60+ min)</span></div>
+      <div class="dual-range">
+        <input type="range" id="fbd-fs-dur-lo" min="0" max="60" step="1" value="0" oninput="_fbDurationSliderLiveUpdate()" onchange="_fbDurationFsUpdate()">
+        <input type="range" id="fbd-fs-dur-hi" min="0" max="60" step="1" value="60" oninput="_fbDurationSliderLiveUpdate()" onchange="_fbDurationFsUpdate()">
+      </div>
+    </div>
+    <div style="position:relative;height:340px;padding:20px 20px 0;"><canvas id="chart-fbduration-fs"></canvas></div>
     <div style="display:flex;align-items:center;gap:8px;padding:10px 20px 0;">
       <span style="font-size:.65rem;color:var(--label);">${t('chart.fbduration.met.low') || 'Low MET'}</span>
       <div style="flex:1;height:8px;border-radius:4px;background:linear-gradient(to right, rgb(43,140,238), rgb(43,238,162), rgb(97,238,43), rgb(238,205,43), rgb(238,151,43), rgb(238,97,43), rgb(238,43,43));"></div>
       <span style="font-size:.65rem;color:var(--label);">${t('chart.fbduration.met.high') || 'High MET'}</span>
     </div>
-    <div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;padding:10px 20px 0;">
-      <button id="fbd-fs-gaps-toggle" onclick="_fbDurationToggleGaps()" style="flex:1;min-width:120px;height:34px;margin:0;box-sizing:border-box;padding:0 8px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.72rem;font-weight:700;">${t('chart.fbduration.showgaps') || 'Show Gaps'}</button>
-      <select id="fbd-fs-zone" onchange="_fbDurationZoneChange()" style="flex:1;min-width:140px;height:34px;min-height:34px;margin:0;box-sizing:border-box;font-size:.72rem;font-weight:700;background:var(--surface2) url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236B7280%22 stroke-width=%222%22><polyline points=%226,9 12,15 18,9%22/></svg>') no-repeat right 8px center;background-size:14px;-webkit-appearance:none;appearance:none;color:var(--label);border:1px solid var(--glass-border);border-radius:8px;padding:0 28px 0 8px;">
-        <option value="">${t('chart.fbduration.zone.none') || 'No Target Zone'}</option>
-        <option value="maximal_power">${t('chart.fbduration.zone.mp') || 'Maximal Power'}</option>
-        <option value="heavy_metcon">${t('chart.fbduration.zone.hm') || 'Heavy Metcon'}</option>
-        <option value="strength_endurance">${t('chart.fbduration.zone.se') || 'Strength Endurance'}</option>
-        <option value="aerobic_base">${t('chart.fbduration.zone.ab') || 'Aerobic Base'}</option>
-        <option value="anaerobic_sprint">${t('chart.fbduration.zone.as') || 'Anaerobic Sprint'}</option>
-      </select>
-    </div>
-    <div id="fbd-insight-card" style="display:none;margin:10px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;">
+    <div id="fbd-insight-card" style="display:none;margin:16px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;">
       <div id="fbd-insight-title" style="font-size:.82rem;font-weight:700;color:var(--text);margin-bottom:8px;">—</div>
       <div id="fbd-insight-metrics" style="font-size:.7rem;color:var(--label);margin-bottom:8px;"></div>
       <div id="fbd-insight-match" style="font-size:.7rem;color:var(--label);padding-top:8px;border-top:1px solid var(--glass-border);"></div>
     </div>
-    <div style="margin:16px 20px 0;padding-top:14px;border-top:1px solid var(--glass-border);">
-      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.controls.title') || 'Gate Thresholds (FB Gap | Duration % | Work/Rep % | Mech %)'}</div>
-      <div id="workbench-controls"></div>
-      <div id="workbench-timeline-section" style="display:none;margin-top:16px;">
-        <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('workbench.timeline.title') || 'Efficiency Progression (E_raw)'}</div>
-        <div style="font-size:.72rem;color:var(--label);margin-bottom:6px;line-height:1.5;">${t('workbench.timeline.subtitle') || 'Matched Twins Timeline'}</div>
-        <div id="workbench-timeline-target" style="font-size:.65rem;color:var(--label);margin-bottom:6px;"></div>
-        <div style="position:relative;height:220px;"><canvas id="chart-eraw-timeline"></canvas></div>
-        <div id="workbench-match-table" style="margin-top:12px;"></div>
-      </div>
+    <div id="workbench-timeline-section" style="display:none;margin:16px 20px 0;padding-top:14px;border-top:1px solid var(--glass-border);">
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('workbench.timeline.title') || 'Efficiency Progression (E_raw)'}</div>
+      <div style="font-size:.72rem;color:var(--label);margin-bottom:6px;line-height:1.5;">${t('workbench.timeline.subtitle') || 'Matched Twins Timeline'}</div>
+      <div id="workbench-timeline-target" style="font-size:.65rem;color:var(--label);margin-bottom:6px;"></div>
+      <div style="position:relative;height:220px;"><canvas id="chart-eraw-timeline"></canvas></div>
+      <div style="font-size:.62rem;color:var(--label);margin-top:6px;">★ ${t('workbench.timeline.starlegend') || '= Target session, matching the'} 🎯 ${t('workbench.timeline.starlegend2') || 'pinned row in the table below'}</div>
+      <div id="workbench-match-table" style="margin-top:12px;"></div>
     </div>`;
 
   const expEl = document.getElementById('chart-fs-explanation');
@@ -1399,7 +1647,6 @@ function openFbDurationFullscreen() {
   }
 
   _fbDurationFsUpdate();
-  _wireFbDurationRangePickers();
 
   // Session Coverage Workbench controls — the timeline/table stay
   // empty/hidden until a point is tapped (see _updateFbDurationInsightCard,
@@ -1444,15 +1691,18 @@ function openPowerScatterFullscreen() {
 
 function _fbDurationFsUpdate() {
   const windowVal = document.getElementById('fbd-fs-window')?.value || 'all';
-  const fbMin = parseFloat(document.querySelector('.fbd-fs-fbmin')?.value) || 0;
-  const fbMax = parseFloat(document.querySelector('.fbd-fs-fbmax')?.value);
-  const durMin = parseFloat(document.querySelector('.fbd-fs-durmin')?.value) || 0;
-  const durMax = parseFloat(document.querySelector('.fbd-fs-durmax')?.value);
-  // A max of 0/no-selection or the 999 sentinel both mean "no upper
-  // bound" — only treat the range as filtered when the athlete has
-  // actually narrowed at least one bound away from its full default.
-  const fbRange = (fbMin > 0 || (fbMax && fbMax < 999)) ? [fbMin, (fbMax && fbMax < 999) ? fbMax : 999] : null;
-  const durRange = (durMin > 0 || (durMax && durMax < 999)) ? [durMin, (durMax && durMax < 999) ? durMax : 999] : null;
+  const fbLo = parseFloat(document.getElementById('fbd-fs-fb-lo')?.value) || 0;
+  const fbHiRaw = parseFloat(document.getElementById('fbd-fs-fb-hi')?.value);
+  const durLo = parseFloat(document.getElementById('fbd-fs-dur-lo')?.value) || 0;
+  const durHiRaw = parseFloat(document.getElementById('fbd-fs-dur-hi')?.value);
+  // A handle at the slider's own max (200 for FB, 60 for Duration) means
+  // "no upper bound" — same 999-sentinel semantics renderFbDurationChart
+  // already expects, just derived from the slider's own range instead of
+  // a picker's explicit 999 option.
+  const fbHi = (fbHiRaw != null && fbHiRaw < 200) ? fbHiRaw : 999;
+  const durHi = (durHiRaw != null && durHiRaw < 60) ? durHiRaw : 999;
+  const fbRange = (fbLo > 0 || fbHi < 999) ? [fbLo, fbHi] : null;
+  const durRange = (durLo > 0 || durHi < 999) ? [durLo, durHi] : null;
   renderFbDurationChart('chart-fbduration-fs', { window: windowVal, fbRange, durRange });
 }
 
