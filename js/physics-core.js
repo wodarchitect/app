@@ -106,6 +106,52 @@ function _buildCardioIntervalSummary() {
   return Object.keys(summary).length ? summary : null;
 }
 
+// Same (block, movement type) real-duration lookup as
+// _buildCardioIntervalSummary above, but scoped to a single block —
+// used live, mid-session, by the Audit Trail while building each
+// block's movement rows, before a full-session summary makes sense.
+function _liveCardioRealSecs(blockIdx, cardioType) {
+  const secs = (window._cardioIntervals || [])
+    .filter(iv => iv.blockIdx === blockIdx && iv.movement === cardioType)
+    .reduce((sum, iv) => sum + iv.durationSec, 0);
+  return secs > 0 ? secs : null;
+}
+
+// Formats real per-movement cardio pace/cadence/cal-min for Audit Trail
+// display. totalUnits is real total distance in meters (run/row/ski),
+// total calories (bike), or total reps (du/jump rope — cardioRef=1 or
+// 10 respectively), all already derived the same way
+// getSessionCardioInstances does from reps × MASTER_DB's cardioRef.
+// secs must be a real toggle-recorded duration — this is never called
+// with an estimated duration, so no fabricated pace is ever shown.
+function _fmtCardioPace(cardioType, totalUnits, secs) {
+  if (!secs || secs <= 0 || !totalUnits || totalUnits <= 0) return '';
+  const mins = secs / 60;
+  if (cardioType === 'run') {
+    const secPerKm = secs / (totalUnits / 1000);
+    if (!isFinite(secPerKm) || secPerKm <= 0) return '';
+    const m = Math.floor(secPerKm / 60), s = Math.round(secPerKm % 60);
+    return `${m}:${String(s).padStart(2, '0')}/km`;
+  }
+  if (cardioType === 'row' || cardioType === 'ski') {
+    const secPer500 = secs / (totalUnits / 500);
+    if (!isFinite(secPer500) || secPer500 <= 0) return '';
+    const m = Math.floor(secPer500 / 60), s = Math.round(secPer500 % 60);
+    return `${m}:${String(s).padStart(2, '0')}/500m`;
+  }
+  if (cardioType === 'du') {
+    const rpm = totalUnits / mins;
+    if (!isFinite(rpm) || rpm <= 0) return '';
+    return `${Math.round(rpm)} rpm`;
+  }
+  if (cardioType === 'bike') {
+    const calMin = totalUnits / mins;
+    if (!isFinite(calMin) || calMin <= 0) return '';
+    return `${calMin.toFixed(1)} cal/min`;
+  }
+  return '';
+}
+
 // Rest periods as their own HR-derived segments, same treatment as any
 // mechanical segment — real average HR during the window, converted to
 // relIntensity via %HRR, no invented baseline MET. Only ever populated
@@ -169,7 +215,35 @@ function _getBlockWindow(blockIdx, expectedDurationSec) {
 // minus the block's own mechKcal (clamped >=0) for blockOverhead.
 function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTotal, bw, vo2max, ageFactor, genderFactor, hrRest, hrMax) {
   let overhead = 0;
-  let cv = blockCardioKcalTotal; // cardio segments' real kcal counts toward CV directly, no HR/RPE needed for this part
+  // cv starts at blockCardioKcalTotal ONLY when segments are genuinely
+  // split by real time — _buildBlockSegments' "mechanical" segment has
+  // cardio-toggle time already subtracted out (mechDurationSec =
+  // blockDurationSec - cardioDurationSec), so adding blockCardioKcalTotal
+  // separately doesn't double-count anything in that case. But when no
+  // real HR exists anywhere in the block, _buildBlockSegments collapses
+  // everything into ONE segment spanning the FULL, un-reduced block
+  // duration (type:'block', source:'manual_rpe') — same shape as the
+  // inline fallback in calculateGlobalPhysics when _getBlockWindow finds
+  // no window at all. That single segment's RPE-based estimate already
+  // implicitly represents the whole block's effort, run included —
+  // starting cv at blockCardioKcalTotal on top of it added the run's
+  // kcal a second time. Confirmed by comparing against
+  // getSessionCVEndurance's reconstruction for an identical session:
+  // reconstruction has no concept of per-segment splitting at all and
+  // always computes one whole-block RPE estimate with nothing added on
+  // top — which is exactly what this fallback case should have been
+  // doing here too.
+  const isWholeBlockFallback = segments.length === 1 && segments[0].type === 'block';
+  let cv = isWholeBlockFallback ? 0 : blockCardioKcalTotal;
+  // Same reasoning applies to overhead, mirroring reconstruction's
+  // "blockTotalMetEstimate - blockMechKcal - blockCardioKcal": the real-
+  // segmented 'mechanical' segment's duration already excludes cardio
+  // time, so subtracting only blockMechKcal is correct there. The
+  // whole-block fallback segment spans the full duration, cardio time
+  // included, so it needs the same cardio subtraction reconstruction
+  // uses — without it, overhead was overstated by roughly the cardio
+  // kcal amount whenever a mixed block had no real HR data.
+  const overheadCardioSubtraction = isWholeBlockFallback ? blockCardioKcalTotal : 0;
   const cardioTypes = ['run', 'row', 'du', 'ski'];
 
   segments.forEach(seg => {
@@ -185,7 +259,7 @@ function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTota
     const met = (relIntensity * vo2max) / 3.5;
     const timeHours = seg.durationSec / 3600;
     const segTotalMetEstimate = met * bw * timeHours * ageFactor * genderFactor;
-    overhead += Math.max(0, segTotalMetEstimate - blockMechKcal);
+    overhead += Math.max(0, segTotalMetEstimate - blockMechKcal - overheadCardioSubtraction);
     cv += segTotalMetEstimate;
   });
 
@@ -1303,6 +1377,15 @@ function calculateGlobalPhysics() {
         else if (cardioType === 'row') kcalShare = (liveCardioByBlock.rowByBlock[idx] || 0) / splitCount;
         else kcalShare = ((cardioResult.byBlock[idx] || {})[cardioType] || 0) / splitCount;
         _workDisplay = `${Math.round(kcalShare)} kcal (aerobic)`;
+        // Real pace/cadence/cal-min — only appended when the cardio
+        // toggle was actually used for this (block, movement type)
+        // during the live session. No estimate ever shown here.
+        const _realSecs = _liveCardioRealSecs(idx, cardioType);
+        if (_realSecs) {
+          const _totalUnits = reps * (p.cardioRef || 1);
+          const _paceStr = _fmtCardioPace(cardioType, _totalUnits, _realSecs);
+          if (_paceStr) _workDisplay += ` · ${_paceStr}`;
+        }
       } else {
         _workDisplay = `${tw_mv.toFixed(2)} kJ`;
       }
@@ -1519,16 +1602,25 @@ function calculateGlobalPhysics() {
       // as two separate numbers, not one metric doing both jobs.
       const _metMinEl = document.getElementById('resMetMinutes');
       if (_metMinEl) _metMinEl.innerText = _cvResult.metMinutes ? `${Math.round(_cvResult.metMinutes)} MET-min` : '';
-      // %HRR reference — derived by reversing the existing
-      // met = relIntensity * vo2max / 3.5 formula (see
-      // _computeBlockOverheadAndCV), not a separate calculation. Only
-      // shown when vo2max is actually known — a fabricated %HRR from a
-      // missing vo2max would be worse than showing nothing.
+      // %HRR — real Karvonen formula ((session avg HR − resting HR) /
+      // (HR max − resting HR)) whenever the session has real measured
+      // HR AND the profile's Resting HR / HR Max fields are both set —
+      // same formula _computeBlockOverheadAndCV already applies
+      // per-segment, just against the whole-session avg HR here. Falls
+      // back to reversing met = relIntensity * vo2max / 3.5 (the
+      // pace/MET-derived estimate) only when real HR data isn't
+      // available, labeled "(est.)" so it's never mistaken for measured.
       const _hrrEl = document.getElementById('resHRR');
       if (_hrrEl) {
-        if (vo2max > 0) {
+        const _sessionHRForHRR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
+        const _hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+        const _hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+        if (_sessionHRForHRR && _hrRestVal && _hrMaxVal && _hrMaxVal > _hrRestVal) {
+          const realPctHRR = Math.max(0, Math.min(100, (_sessionHRForHRR.avg - _hrRestVal) / (_hrMaxVal - _hrRestVal) * 100));
+          _hrrEl.innerText = `${Math.round(realPctHRR)}% HRR`;
+        } else if (vo2max > 0) {
           const pctHRR = Math.max(0, Math.min(100, (_cvResult.met * 3.5 / vo2max) * 100));
-          _hrrEl.innerText = `${Math.round(pctHRR)}% HRR`;
+          _hrrEl.innerText = `${Math.round(pctHRR)}% HRR (est.)`;
         } else {
           _hrrEl.innerText = '';
         }

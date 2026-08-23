@@ -1145,6 +1145,12 @@ function renderHistory() {
       modalityPills = `<span style="font-size:.58rem;font-weight:800;color:${mc2.color};background:${mc2.bg};border:1px solid ${mc2.border}44;border-radius:4px;padding:1px 6px;letter-spacing:.06em;">${mc2.label}</span>`;
     }
     const rpePill = w.rpe ? `<span class="rpe-badge" style="background:${getRPEColor(w.rpe)}22;color:${getRPEColor(w.rpe)};border:1px solid ${getRPEColor(w.rpe)}44;">RPE ${w.rpe}/10</span>` : '';
+    // Same 6 physics results, same order, as the live flow and the
+    // History Modal: Power, Cardio Intensity, Work, MC, FB, RL merged
+    // with TD. Cardio Intensity shows '—' rather than being omitted
+    // when there's no cardio data, since this is a fixed 6-slot grid —
+    // an omitted tile would misalign every other tile after it.
+    const cvResultCard = getSessionCVEndurance(w);
 
     return `<div class="history-card" onclick="openHistoryModal(${i})" style="border-left:3px solid ${borderColor};">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -1157,11 +1163,11 @@ function renderHistory() {
       </div>
       <div class="history-metrics" style="margin-top:10px;">
         <div class="history-metric"><div class="history-metric-val" style="color:${getPDColor(getSessionPower(w)?.total || w.pd)}">${(getSessionPower(w)?.total != null ? getSessionPower(w).total.toFixed(2) : w.pd)}</div><div class="history-metric-label">W/kg</div></div>
+        <div class="history-metric"><div class="history-metric-val">${cvResultCard ? cvResultCard.met.toFixed(1) : '—'}</div><div class="history-metric-label">MET</div></div>
         <div class="history-metric"><div class="history-metric-val">${(parseFloat(w.wd)||0).toFixed(1)}</div><div class="history-metric-label">kJ</div></div>
         <div class="history-metric"><div class="history-metric-val">${w.mc}</div><div class="history-metric-label">kcal</div></div>
         <div class="history-metric"><div class="history-metric-val">${w.fb}</div><div class="history-metric-label">${t('hist.card.bias')}</div></div>
-        <div class="history-metric"><div class="history-metric-val">${w.td ?? '—'}</div><div class="history-metric-label">${t('hist.card.td')}</div></div>
-        <div class="history-metric"><div class="history-metric-val">${w.rl !== undefined && w.rl !== null ? w.rl + '%' : '0%'}</div><div class="history-metric-label">${t('hist.card.rl')}</div></div>
+        <div class="history-metric"><div class="history-metric-val">${w.rl !== undefined && w.rl !== null ? w.rl + '%' : '0%'}</div><div class="history-metric-label">${t('hist.card.rl')}${w.td != null ? ` · ${t('hist.card.td')} ${w.td}` : ''}</div></div>
       </div>
     </div>`;
   }).join('');
@@ -1205,6 +1211,11 @@ function buildHistoryOverviewTable(w) {
   const tc = 'var(--text)';
   const rb = 'border-top:1px solid rgba(0,0,0,.05);';
   let html = '';
+  // Real pace/cadence/cal-min per (block, cardio type), keyed the same
+  // way the live Audit Trail derives it — see getHistoryCardioPaceMap
+  // in physics-reconstruction.js. Empty object (not shown) for entries
+  // with no real toggle-recorded cardio data.
+  const _paceMap = (typeof getHistoryCardioPaceMap === 'function') ? getHistoryCardioPaceMap(w) : {};
 
   blocks.forEach((b, bi) => {
     const mode = (b.mode || 'fortime').toUpperCase();
@@ -1314,8 +1325,14 @@ function buildHistoryOverviewTable(w) {
             ovTag = ` <span style="color:var(--brand);font-weight:900;">(${ovSeq[0]}→${ovSeq[ovSeq.length-1]} ${arrow}${inc})</span>`;
           }
         }
+        // Real pace/cadence/cal-min — only appended for cardio movements
+        // that actually have real toggle-recorded data for this block
+        // (never an estimate, per getHistoryCardioPaceMap).
+        const _cardioType = MASTER_DB[mv.name]?.cardio;
+        const _paceStr = _cardioType ? _paceMap[`${bi}_${_cardioType}`] : null;
+        const _paceTag = _paceStr ? ` <span style="color:var(--label);">· ${_paceStr}</span>` : '';
         html += `<span style="font-size:.73rem;font-weight:700;color:${hc};${rb}padding:2px 10px 2px 0;">${rStr}</span>`;
-        html += `<span style="font-size:.73rem;color:${tc};${rb}padding:2px 0 2px 10px;">${dispName}${kgStr}${ovTag}</span>`;
+        html += `<span style="font-size:.73rem;color:${tc};${rb}padding:2px 0 2px 10px;">${dispName}${kgStr}${ovTag}${_paceTag}</span>`;
       });
       html += '</div>';
     } else {
@@ -1484,35 +1501,113 @@ function openHistoryModal(idx) {
     </div>` : ''}
     <div class="modal-section">
       <div class="modal-section-title">${t('hist.modal.phys.static')}</div>
-      <div class="grid-2" style="gap:8px;">
-        <div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;color:${getPDColor(getSessionPower(w)?.total || w.pd)}">${(getSessionPower(w)?.total != null ? getSessionPower(w).total.toFixed(2) : w.pd)}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.pd')}</div>
-        </div>
-        <div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;">${(parseFloat(w.wd)||0).toFixed(1)}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.wd')}</div>
-        </div>
-        <div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;">${w.mc}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.mc')}</div>
-          ${w.mc_mech != null ? `<div style="font-size:.62rem;color:var(--label);margin-top:3px;line-height:1.6;">🟠${w.mc_mech}${w.mc_aero ? ` 🟢${w.mc_aero}` : ''}${w.mc_overhead ? ` 🔵${w.mc_overhead}est.` : ''}</div>` : ''}
-        </div>
-        <div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;">${w.fb}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.fb')}</div>
-        </div>
-        <div class="history-metric" style="padding:10px 6px;"><div class="history-metric-val" style="font-size:1.2rem;">${w.td ?? '—'}</div><div class="history-metric-label">${t('hist.modal.metric.td')}</div></div>
-        ${`<div class="history-metric" style="padding:10px 6px;"><div class="history-metric-val" style="font-size:1.2rem;">${w.rl !== undefined && w.rl !== null ? w.rl + '%' : '0%'}</div><div class="history-metric-label">${t('hist.modal.metric.rl')}</div></div>`}
-        ${cvResult ? `<div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;">${cvResult.met.toFixed(1)}${!cvResult.allReal ? ' <span style="font-size:.6rem;color:var(--label);">est.</span>' : ''}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.cvintensity') || 'CV Intensity (MET)'}</div>
-        </div>
-        <div class="history-metric" style="padding:10px 6px;">
-          <div class="history-metric-val" style="font-size:1.6rem;letter-spacing:-.02em;">${Math.round(cvResult.metMinutes)}</div>
-          <div class="history-metric-label">${t('hist.modal.metric.internalload') || 'Internal Load (MET-min)'}</div>
-        </div>` : ''}
-      </div>
+      ${(() => {
+        // Rebuilt to match the live calculation flow's 6-card set,
+        // order, content, and actual CSS (.metric-card/.unit/
+        // .metric-val/.metric-unit — same classes the live #results
+        // cards use, from styles.css) exactly. Layout follows Michael's
+        // mockup: Cardio Intensity and Metabolic Cost split into a
+        // left value column + right detail column. No benchmark bars
+        // by design — dropped after the first pass.
+        const pdVal = getSessionPower(w)?.total != null ? getSessionPower(w).total : parseFloat(w.pd) || 0;
+        const wdVal = parseFloat(w.wd) || 0;
+        const mcVal = parseFloat(w.mc) || 0;
+        const fbVal = parseFloat(w.fb) || 0;
+        const rlVal = (w.rl !== undefined && w.rl !== null) ? w.rl : 0;
+        const tdVal = w.td ?? null;
+        // Real Karvonen %HRR — (session avg HR − resting HR) / (HR max
+        // − resting HR) — whenever the session has a real measured
+        // avgHR AND the profile's Resting HR / HR Max fields are both
+        // set. This is the SAME formula physics-core.js already uses
+        // per-segment for the overhead calculation (see
+        // _computeBlockOverheadAndCV), just applied to the session's
+        // whole-session avgHR instead of one segment's. Falls back to
+        // the pace/MET-derived estimate (reversing the MET formula
+        // against VO2max) only when real HR data isn't available,
+        // clearly labeled "(est.)" so it's never mistaken for measured.
+        const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+        const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+        let hrrDisplay = null; // { pct, isReal }
+        if (w.avgHR != null && hrRestVal && hrMaxVal && hrMaxVal > hrRestVal) {
+          const realPct = Math.max(0, Math.min(100, (w.avgHR - hrRestVal) / (hrMaxVal - hrRestVal) * 100));
+          hrrDisplay = { pct: Math.round(realPct), isReal: true };
+        } else if (cvResult && w.vo2max_used) {
+          const estPct = Math.max(0, Math.min(100, (cvResult.met * 3.5 / w.vo2max_used) * 100));
+          hrrDisplay = { pct: Math.round(estPct), isReal: false };
+        }
+        let rlContext = null;
+        try { rlContext = (typeof reconstructRL === 'function') ? reconstructRL(w, null, true) : null; } catch (e) {}
+        const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
+        const mcRows = [];
+        if (w.mc_mech != null) mcRows.push(dotRow('var(--brand)', `Mechanical: ${w.mc_mech} kcal`));
+        if (w.mc_aero) mcRows.push(dotRow('var(--success)', `Aerobic: ${w.mc_aero} kcal`));
+        if (w.mc_overhead) mcRows.push(dotRow('#3B82F6', `Overhead (est.): ${w.mc_overhead} kcal`));
+
+        return `<div class="grid-2" style="gap:10px;">
+          <div class="metric-card">
+            <span class="unit">${t('result.total.power')}</span>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val" style="color:${getPDColor(pdVal)}">${pdVal.toFixed(2)}</span>
+              <span class="metric-unit">W/kg</span>
+            </div>
+          </div>
+          ${cvResult ? `<div class="metric-card">
+            <span class="unit">${t('result.aero.power')}</span>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+              <div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                  <span class="metric-val">${cvResult.met.toFixed(1)}</span>
+                  <span class="metric-unit">MET</span>
+                </div>
+                ${hrrDisplay ? `<div style="font-size:.68rem;color:var(--text);margin-top:6px;">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' <span style="color:var(--label);">(est.)</span>'}</div>` : ''}
+              </div>
+              ${w.avgHR != null ? `<div style="font-size:.68rem;color:var(--label);text-align:right;flex-shrink:0;">
+                <div>Average HR: ${w.avgHR} BPM</div>
+                <div style="margin-top:2px;">Max HR: ${w.maxHR ?? '—'} BPM</div>
+              </div>` : ''}
+            </div>
+            ${!cvResult.allReal ? `<div style="font-size:.62rem;color:var(--label);margin-top:2px;">${t('aero.power.estimated')}</div>` : ''}
+          </div>` : ''}
+          <div class="metric-card">
+            <span class="unit">${t('result.total.work')}</span>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val">${wdVal.toFixed(1)}</span>
+              <span class="metric-unit">kJ</span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <span class="unit">${t('result.total.mc')}</span>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+              <div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                  <span class="metric-val">${mcVal.toFixed(0)}</span>
+                  <span class="metric-unit">kcal</span>
+                </div>
+                ${cvResult ? `<div style="font-size:.68rem;color:var(--label);margin-top:2px;">${Math.round(cvResult.metMinutes)} MET-min</div>` : ''}
+              </div>
+              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;flex-shrink:0;">${mcRows.join('')}</div>` : ''}
+            </div>
+          </div>
+          <div class="metric-card">
+            <span class="unit">${t('result.force.bias2')}</span>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val">${fbVal.toFixed(0)}</span>
+              <span class="metric-unit">kg/kJ</span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <span class="unit">${t('result.rel.load')}</span>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val">${rlVal}%</span>
+              ${rlContext?.movementName ? `<span class="metric-unit">${t('result.of.1rm')} ${rlContext.movementName}</span>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+              <span style="font-size:.68rem;color:var(--label);">${t('result.actual.td')}</span>
+              <span style="font-size:.72rem;font-weight:800;color:${getTDLabel ? getTDLabel(tdVal || 0).color : 'var(--brand)'};">${tdVal != null ? tdVal + ' / 5' : '—'}</span>
+            </div>
+          </div>
+        </div>`;
+      })()}
     </div>
     <div class="modal-section">
       <div class="modal-section-title">${t('hist.modal.log.static')}</div>

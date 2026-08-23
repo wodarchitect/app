@@ -7,7 +7,20 @@
    correct entries are left alone).
 ════════════════════════════════════════════════════ */
 
-const OVERHEAD_REF_TARGET_VERSION = 3;
+// v4: bumped from 3 after finding _computeBlockOverheadAndCV (the live
+// calculation) had a related but distinct bug — its whole-block-fallback
+// path (no real HR data anywhere in the block) added blockCardioKcalTotal
+// on top of a segTotalMetEstimate that already spanned the full block
+// duration, cardio time included, instead of subtracting it the way this
+// migration's own formula already correctly does. Sessions saved after
+// v3 shipped but before that live fix got stamped overheadRefVersion=3
+// immediately at save time (already "current"), permanently skipping
+// this migration even though their mc_overhead was computed with the
+// still-buggy live formula. Re-running the same, unchanged formula below
+// against everyone catches those — confirmed against a real affected
+// session (RPE 8, VO2max 34, single 20-min mixed block): old value 117,
+// this formula gives ~78, matching the now-fixed live calculation.
+const OVERHEAD_REF_TARGET_VERSION = 4;
 
 // Recalculates Overhead for every session using RPE directly instead of an
 // inferred relative-intensity ceiling. Replaces the entire class of

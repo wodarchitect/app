@@ -541,6 +541,33 @@ function getSessionCardioTimeSec(entry) {
   return getSessionCardioInstances(entry).reduce((sum, inst) => sum + inst.secs, 0);
 }
 
+// Real per-movement pace/cadence/cal-min for the History Modal's log
+// table — same _fmtCardioPace formatter the live Audit Trail uses (see
+// physics-core.js), fed from getSessionCardioInstances' real instances
+// only (inst.isReal — never a PR-based estimate). Multiple instances of
+// the same (block, cardioType) — e.g. two separate DU stations — are
+// summed before formatting, matching how the live Audit Trail's
+// _liveCardioRealSecs aggregates toggle intervals. Returns
+// {"blockIndex_cardioType": "1:58/500m", ...}, empty object if no real
+// cardio toggle data exists on this entry.
+function getHistoryCardioPaceMap(entry) {
+  const totals = {}; // "blockIndex_cardioType" -> { totalM, secs, cardioType }
+  getSessionCardioInstances(entry).forEach(inst => {
+    if (!inst.isReal) return;
+    const key = `${inst.blockIndex}_${inst.cardioType}`;
+    if (!totals[key]) totals[key] = { totalM: 0, secs: 0, cardioType: inst.cardioType };
+    totals[key].totalM += inst.totalM;
+    totals[key].secs += inst.secs;
+  });
+  const paceByKey = {};
+  Object.keys(totals).forEach(key => {
+    const { totalM, secs, cardioType } = totals[key];
+    const paceStr = (typeof _fmtCardioPace === 'function') ? _fmtCardioPace(cardioType, totalM, secs) : '';
+    if (paceStr) paceByKey[key] = paceStr;
+  });
+  return paceByKey;
+}
+
 // Cardiovascular Endurance — CrossFit's actual GPP skill definition:
 // efficiency of oxygen delivery/utilization, which is happening
 // continuously through a session, not just during movements tagged
