@@ -549,12 +549,16 @@ function toggleTimer() {
   if (!isRunning && !sessionEnded) {
     isRunning = true; activeBlockIdx = 0;
     _roundSplits = []; // reset splits for new session
+    window._lastRoundTapUndo = null; // clear any stale undo from a prior session
+    const _undoBtnReset = document.getElementById('roundFabUndo');
+    if (_undoBtnReset) _undoBtnReset.style.display = 'none';
     window._actualRestUsed = 0;
     window._timerRestCompleted = false;
     _cardioResetIntervals();
     _cardioDetectMovements();
     _watchControlStart();
     window._hrSamples = [];
+    if (typeof vbtResetSession === 'function') vbtResetSession(); // same reset point as HR — new session never inherits prior VBT accumulation
     window._hrBlockStartMs = Date.now();
     window._blockTimeWindows = []; // [{blockIdx, startMs, endMs}] — built as blocks transition, closed off at session end. Used at save time to attribute HR samples to the correct block.
     window._restTimeWindows = []; // [{afterBlockIdx, startMs, endMs}] — only populated when a rest countdown genuinely runs live (see the rest-countdown code); real wall-clock timestamps, same as block windows, not derived from any duration estimate.
@@ -859,7 +863,7 @@ function runEngine() {
       }
 
       if (mode !== 'fortime' && mode !== 'emom' && mode !== 'exmom' && blockSec <= 0) { _rafRunning = false; finishCurrentBlock(); return; }
-      if (mode === 'fortime' && blockSec >= capSec) { _rafRunning = false; finishCurrentBlock(); return; }
+      if (mode === 'fortime' && blockSec >= capSec) { _rafRunning = false; finishCurrentBlock(capSec); return; }
     }
 
     // ── Smooth ring update every frame ──
@@ -887,7 +891,11 @@ function runEngine() {
   requestAnimationFrame(_engineFrame);
 }
 
-function finishCurrentBlock() {
+// capDurationSec: optional — see the _blockTimeWindows.push() comment
+// below for why this exists (clamps a capped FORTIME block's recorded
+// end time to the actual cap boundary rather than whenever this
+// function happens to run).
+function finishCurrentBlock(capDurationSec) {
   const bEl = document.querySelectorAll('.wod-block')[activeBlockIdx];
   if (bEl) {
     const mode = bEl.querySelector('.b-mode').value;
@@ -914,9 +922,33 @@ function finishCurrentBlock() {
   }
   if (timerItv?.cancel) timerItv.cancel(); else if (timerItv?.cancel) timerItv.cancel(); else clearInterval(timerItv);
   const _finishedBlockIdx = activeBlockIdx;
-  window._blockTimeWindows.push({ blockIdx: _finishedBlockIdx, startMs: window._hrBlockStartMs, endMs: Date.now() });
+  // capDurationSec, when passed (currently only the FORTIME cap-hit
+  // path above does), clamps this block's recorded end time to exactly
+  // startMs + capDurationSec — not whenever this line of code actually
+  // executes. Date.now() alone drifts from the real cap boundary
+  // whenever there's any delay between the cap being crossed and this
+  // running — a backgrounded tab/locked screen throttles the
+  // requestAnimationFrame loop that detects the cap, so that delay can
+  // be real seconds, not just a frame or two. Without this, a block
+  // scored as an exact 15:00 cap could get 15:37 of segment data
+  // (HR/cardio-toggle time) attributed to it — genuinely more seconds
+  // of tracked data than the scored block ever contained. Manual/early
+  // finishes (every other call site) pass nothing and keep the real
+  // Date.now(), since that IS the correct end time when the athlete
+  // actually decided to stop.
+  const _endMs = capDurationSec != null
+    ? Math.min(Date.now(), window._hrBlockStartMs + capDurationSec * 1000)
+    : Date.now();
+  window._blockTimeWindows.push({ blockIdx: _finishedBlockIdx, startMs: window._hrBlockStartMs, endMs: _endMs });
   activeBlockIdx++;
   window._hrBlockStartMs = Date.now();
+  // The undo above is scoped to a specific blockIdx and refuses to act
+  // once activeBlockIdx has moved on (see undoLastRoundTap), but the
+  // button itself would otherwise stay visibly shown into the next
+  // block if the athlete never tapped it — hide it explicitly here.
+  window._lastRoundTapUndo = null;
+  const _undoBtnFinish = document.getElementById('roundFabUndo');
+  if (_undoBtnFinish) _undoBtnFinish.style.display = 'none';
   const lr = document.getElementById('timerLastRound'); if (lr) lr.textContent = '';
   if (document.querySelectorAll('.wod-block')[activeBlockIdx]) {
     const restSec = getRestDuration();
@@ -1122,6 +1154,18 @@ function incrementLiveRep() {
   const now = Date.now();
   if (now - _lastRepTapMs < 800) return; // debounce — ignore taps within 800ms
   _lastRepTapMs = now;
+  // Snapshot for undo — captured before anything below changes, and
+  // scoped to this specific block (activeBlockIdx) so a stale undo
+  // can't accidentally apply after the block has already changed.
+  // One-shot: only the single most recent tap can be undone, not a
+  // full history of taps.
+  window._lastRoundTapUndo = {
+    blockIdx: activeBlockIdx,
+    prevLiveVal: document.getElementById('liveVal')?.innerText,
+    prevLastRoundStartSec: lastRoundStartSec
+  };
+  const undoBtn = document.getElementById('roundFabUndo');
+  if (undoBtn) undoBtn.style.display = 'flex';
   _cardioAutoDeactivateAll();
   const v = document.getElementById('liveVal');
   v.innerText = parseInt(v.innerText) + 1;
@@ -1158,6 +1202,43 @@ function incrementLiveRep() {
       setTimeout(() => finishCurrentBlock(), 150); // brief delay so the round flash completes
     }
   }
+}
+
+// Undoes exactly the one most recent incrementLiveRep() tap — round
+// count, FAB display, and the split log entry it added. One-shot: the
+// undo button hides itself after use, and window._lastRoundTapUndo is
+// cleared, so it can't be pressed twice for the same tap or reused
+// after a different round has since been logged.
+//
+// Does NOT reverse a block auto-finish that tap may have triggered
+// (see incrementLiveRep's auto-stop check right above) — if the
+// mistaken tap happened to be the block's last prescribed round, the
+// block may already be finished by the time this runs. Resuming an
+// already-finished block is a much larger, riskier change than
+// correcting a round count, and isn't what this handles; the existing
+// Edit Entry flow in the History Modal is the way to fix a result
+// after the fact in that case.
+function undoLastRoundTap() {
+  const u = window._lastRoundTapUndo;
+  if (!u || u.blockIdx !== activeBlockIdx) return; // nothing to undo, or the block has since changed
+  const v = document.getElementById('liveVal');
+  if (v) v.innerText = u.prevLiveVal;
+  lastRoundStartSec = u.prevLastRoundStartSec;
+  const bEl = document.querySelectorAll('.wod-block')[activeBlockIdx];
+  if (bEl) { bEl.querySelector('.res-r').value = u.prevLiveVal; syncResultPickerDisplays(bEl); autoSave(); }
+  const fabNum = document.getElementById('roundFabNum');
+  if (fabNum) fabNum.textContent = u.prevLiveVal;
+  // Remove the split entry this specific tap added — always the last
+  // one pushed for this block, since undo only ever targets the single
+  // most recent tap.
+  if (_roundSplits.length && _roundSplits[_roundSplits.length - 1].block === activeBlockIdx + 1) {
+    _roundSplits.pop();
+  }
+  const lr = document.getElementById('timerLastRound');
+  if (lr) lr.textContent = '';
+  window._lastRoundTapUndo = null;
+  const undoBtn = document.getElementById('roundFabUndo');
+  if (undoBtn) undoBtn.style.display = 'none';
 }
 
 /* Sync result picker trigger labels in detail panel to match hidden block values */

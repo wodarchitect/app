@@ -1397,6 +1397,7 @@ var STRINGS = {
     'hist.modal.sig.static':'Session Signature',
     'hist.modal.phys.static':'Physics Results',
     'hist.modal.eraw.title': 'E_raw Efficiency',
+    'hist.modal.runeraw.title': 'Running eRaw',
     'hist.modal.log.static':'Workout Log',
     'hist.modal.energy.static':'Movement Bias',
     // Modality labels
@@ -2088,6 +2089,7 @@ var STRINGS = {
     'hist.modal.sig.static':'Firma de Sesión',
     'hist.modal.phys.static':'Resultados de Física',
     'hist.modal.eraw.title': 'Eficiencia E_raw',
+    'hist.modal.runeraw.title': 'eRaw de Carrera',
     'hist.modal.log.static':'Registro de Entrenamiento',
     'hist.modal.energy.static':'Sesgo de Movimiento',
     // Modality labels

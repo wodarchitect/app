@@ -304,11 +304,31 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
   try { entry.blockSegments = _buildAllBlockSegments(); } catch (e) { entry.blockSegments = null; }
   try { entry.restSegments = _buildRestSegments(); } catch (e) { entry.restSegments = null; }
   try {
-    const sessionHR = _hrStatsForRange(0, Date.now());
+    // Reuses whatever was frozen into window._lastSessionHR at
+    // Calculate time (physics-core.js), rather than calling
+    // _hrStatsForRange(0, Date.now()) fresh here — that used to be a
+    // second, independent call with its own later Date.now(), so any
+    // gap between Calculate and Save let more HR samples stream in and
+    // shift the average, meaning what got saved didn't always match
+    // what was shown. Falls back to a fresh call only if the frozen
+    // value was never set at all (e.g. a session saved without ever
+    // hitting Calculate through the normal flow).
+    const sessionHR = window._lastSessionHR !== undefined ? window._lastSessionHR : _hrStatsForRange(0, Date.now());
     entry.avgHR = sessionHR ? sessionHR.avg : null;
     entry.maxHR = sessionHR ? sessionHR.max : null;
   } catch (e) { entry.avgHR = null; entry.maxHR = null; }
   try { entry.cardioIntervalSummary = _buildCardioIntervalSummary(); } catch (e) { entry.cardioIntervalSummary = null; }
+  // VBT pod (WitMotion) — sensor-measured mechanical work, saved
+  // alongside entry.wd (the existing PR/ROM estimate, untouched) rather
+  // than replacing it: entry.wd stays the fallback and the baseline for
+  // spotting ROM drift/sensor calibration issues over time, while
+  // entry.vbt_work_kj becomes the authoritative eRaw numerator when
+  // present (see getEngineScoreERaw). Must be set before
+  // _updateERawForEntry() below, which reads these fields to decide
+  // which source to use.
+  entry.vbtUsed = (window._vbtSessionRepCount || 0) > 0;
+  entry.vbt_work_kj = entry.vbtUsed ? window._vbtSessionWorkKJ : null;
+  entry.vbt_rep_count = entry.vbtUsed ? window._vbtSessionRepCount : null;
   _updateERawForEntry(entry);
   {
     const hist = getHistory();
@@ -1165,9 +1185,9 @@ function renderHistory() {
         <div class="history-metric"><div class="history-metric-val" style="color:${getPDColor(getSessionPower(w)?.total || w.pd)}">${(getSessionPower(w)?.total != null ? getSessionPower(w).total.toFixed(2) : w.pd)}</div><div class="history-metric-label">W/kg</div></div>
         <div class="history-metric"><div class="history-metric-val">${cvResultCard ? cvResultCard.met.toFixed(1) : '—'}</div><div class="history-metric-label">MET</div></div>
         <div class="history-metric"><div class="history-metric-val">${(parseFloat(w.wd)||0).toFixed(1)}</div><div class="history-metric-label">kJ</div></div>
-        <div class="history-metric"><div class="history-metric-val">${w.mc}</div><div class="history-metric-label">kcal</div></div>
+        <div class="history-metric"><div class="history-metric-val">${cvResultCard ? Math.round(cvResultCard.metMinutes) : '—'}</div><div class="history-metric-label">MET-MIN</div></div>
         <div class="history-metric"><div class="history-metric-val">${w.fb}</div><div class="history-metric-label">${t('hist.card.bias')}</div></div>
-        <div class="history-metric"><div class="history-metric-val">${w.rl !== undefined && w.rl !== null ? w.rl + '%' : '0%'}</div><div class="history-metric-label">${t('hist.card.rl')}${w.td != null ? ` · ${t('hist.card.td')} ${w.td}` : ''}</div></div>
+        <div class="history-metric"><div class="history-metric-val">${w.td != null ? w.td + '/5' : '—'}</div><div class="history-metric-label">${t('hist.card.td')}${w.rl !== undefined && w.rl !== null ? ` · ${t('hist.card.rl')} ${w.rl}%` : ''}</div></div>
       </div>
     </div>`;
   }).join('');
@@ -1558,6 +1578,25 @@ function openHistoryModal(idx) {
         let eRawDisplay = null;
         try { eRawDisplay = (typeof getERawDisplay === 'function') ? getERawDisplay(w) : null; } catch (e) {}
 
+        // Running eRaw — second banner, only computed/shown when the
+        // main eRaw above landed on MIXED (a pure LOCO_RUN session's
+        // running is already its own primary eRaw, this would just
+        // duplicate it) and the entry has real run distance to credit.
+        let runERawDisplay = null;
+        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && typeof getRunningERawDisplay === 'function') {
+          try {
+            let runMetersForCard = 0;
+            (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(w) : []).forEach(inst => {
+              if (inst.cardioType === 'run') runMetersForCard += inst.totalM;
+            });
+            if (runMetersForCard > 0) {
+              const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+              const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+              runERawDisplay = getRunningERawDisplay(w.blockSegments, runMetersForCard, hrRestVal, hrMaxVal);
+            }
+          } catch (e) {}
+        }
+
         return `${eRawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span class="unit" style="margin-bottom:0;">${t('hist.modal.eraw.title') || 'eRaw Efficiency'}</span>
@@ -1569,6 +1608,19 @@ function openHistoryModal(idx) {
               <span class="metric-unit">${eRawDisplay.unitLabel}</span>
             </div>
             <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${eRawDisplay.sentence}</div>
+          </div>
+        </div>` : ''}
+        ${runERawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="unit" style="margin-bottom:0;">${t('hist.modal.runeraw.title') || 'Running eRaw'}</span>
+            <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Distance / Strain</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
+              <span style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">${runERawDisplay.value.toFixed(1)}</span>
+              <span class="metric-unit">${runERawDisplay.unitLabel}</span>
+            </div>
+            <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${runERawDisplay.sentence}</div>
           </div>
         </div>` : ''}
         <div class="grid-2" style="gap:10px;">

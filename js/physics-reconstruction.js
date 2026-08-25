@@ -297,7 +297,20 @@ function getEngineScoreERaw(entry) {
   if (!cvResult || !cvResult.met || !cvResult.metMinutes) return null; // no Average METs or Cardio Strain available — can't compute any branch
 
   const hMetres = (parseFloat(document.getElementById('global-h')?.value) || 175) / 100;
-  const { tonnage, workKJ } = reconstructMechanicalWork(entry, bw, hMetres);
+  const { tonnage, workKJ: workKJEstimated } = reconstructMechanicalWork(entry, bw, hMetres);
+
+  // Sensor-measured mechanical work (WitMotion VBT pod) is authoritative
+  // for eRaw's numerator specifically when the pod tracked this session
+  // (entry.vbt_work_kj, saved alongside entry.wd — the estimate — at
+  // save time, never overwriting it). workKJEstimated above is always
+  // computed regardless, both as the fallback when the pod wasn't used
+  // and so it's always available for comparison against the sensor
+  // value later (sensor calibration drift, ROM degradation trends) —
+  // Force Bias below deliberately keeps using workKJEstimated, not
+  // this: tonnage/estimated-ROM is Force Bias's own established
+  // convention and wasn't part of this change.
+  const usingSensorWork = entry.vbtUsed && entry.vbt_work_kj != null && entry.vbt_work_kj > 0;
+  const workKJ = usingSensorWork ? entry.vbt_work_kj : workKJEstimated;
 
   let runMeters = 0, runSec = 0, duReps = 0, duSec = 0;
   getSessionCardioInstances(entry).forEach(inst => {
@@ -309,14 +322,14 @@ function getEngineScoreERaw(entry) {
 
   if (modality === 'MIXED') {
     const eRaw = workKJ / cvResult.metMinutes;
-    const forceBias = tonnage / workKJ;
-    return { eRaw, modality, forceBias, totalSec, workKJ, metMinutes: cvResult.metMinutes };
+    const forceBias = tonnage / workKJEstimated;
+    return { eRaw, modality, forceBias, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
   }
   if (modality === 'LOCO_RUN') {
-    return { eRaw: runMeters / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
+    return { eRaw: runMeters / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
   }
   // LOCO_DU
-  return { eRaw: duReps / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, metMinutes: cvResult.metMinutes };
+  return { eRaw: duReps / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
 }
 
 // Display helper for the eRaw banner (History Modal, and anywhere else
@@ -328,13 +341,70 @@ function getERawDisplay(entry) {
   const r = getEngineScoreERaw(entry);
   if (!r) return null;
   if (r.modality === 'MIXED') {
-    return { value: r.eRaw, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(2)} kJ of mechanical work.` };
+    const sourceNote = r.usingSensorWork ? ' (sensor-measured)' : '';
+    return { value: r.eRaw, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(2)} kJ of mechanical work${sourceNote}.` };
   }
   if (r.modality === 'LOCO_RUN') {
     return { value: r.eRaw, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} meters of distance.` };
   }
   // LOCO_DU — not one of the two specified archetypes; same pattern, reps instead of meters.
   return { value: r.eRaw, unitLabel: 'reps / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} reps.` };
+}
+
+// Running eRaw — a SECOND, separate distance/MET-min figure for the
+// running portion specifically of a MIXED session (lifting + running
+// together). Exists because the main eRaw above only ever measures
+// mechanical work against the WHOLE session's cardio cost — real
+// running done alongside lifting shows up purely as a cost that
+// dilutes that number, with no credit anywhere for the running itself.
+// This gives running the same distance/MET-min formula a pure-running
+// (LOCO_RUN) session already gets, computed from the running segment
+// specifically rather than requiring the whole session to be pure
+// cardio. Returns null whenever there's no real running to credit —
+// never fabricates a number for a session that didn't actually
+// include it.
+function getRunningERawDisplay(blockSegments, runDistanceM, hrRestVal, hrMaxVal) {
+  if (!runDistanceM || runDistanceM <= 0) return null;
+  const runSegs = (blockSegments || []).flat().filter(s => s && s.type === 'run');
+  if (!runSegs.length) return null;
+  const totalDurationSec = runSegs.reduce((sum, s) => sum + (s.durationSec || 0), 0);
+  if (totalDurationSec <= 0) return null;
+
+  // Real Karvonen MET when the run segment has real HR AND the
+  // athlete's profile Resting HR / HR Max are both set — same
+  // real-vs-estimate convention already used for %HRR elsewhere in
+  // this app. Falls back to the Run movement's own defined MET
+  // constant (MASTER_DB) otherwise, duration-weighted across segments
+  // if there's more than one real-HR run segment.
+  let metVal = null, isEstimate = false;
+  const realSegs = runSegs.filter(s => s.source === 'hr_segment' && s.avgHR != null);
+  if (realSegs.length && hrRestVal && hrMaxVal && hrMaxVal > hrRestVal) {
+    let weightedSum = 0, weightedDur = 0;
+    realSegs.forEach(s => {
+      const relIntensity = Math.max(0, Math.min(1, (s.avgHR - hrRestVal) / (hrMaxVal - hrRestVal)));
+      weightedSum += relIntensity * s.durationSec;
+      weightedDur += s.durationSec;
+    });
+    if (weightedDur > 0) {
+      const vo2 = (typeof getEffectiveVO2max === 'function') ? (getEffectiveVO2max()?.value || 0) : 0;
+      if (vo2 > 0) metVal = (weightedSum / weightedDur) * vo2 / 3.5;
+    }
+  }
+  if (!metVal) {
+    const runDef = (typeof MASTER_DB !== 'undefined') ? Object.values(MASTER_DB).find(m => m.cardio === 'run') : null;
+    metVal = runDef?.met || 10; // MASTER_DB's own Run constant, or a sane fallback if that lookup ever fails
+    isEstimate = true;
+  }
+  if (!metVal || metVal <= 0) return null;
+
+  const metMinutes = metVal * (totalDurationSec / 60);
+  if (metMinutes <= 0) return null;
+  const value = runDistanceM / metMinutes;
+  return {
+    value,
+    unitLabel: 'm / MET-min',
+    sentence: `Running: every MET-min yielded ${value.toFixed(1)} meters of distance${isEstimate ? ' (estimated MET)' : ''}.`
+  };
 }
 
 // Captures this session's eRaw (and the two absolute physics values it

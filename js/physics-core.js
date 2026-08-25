@@ -1625,18 +1625,26 @@ function calculateGlobalPhysics() {
           _hrrEl.innerText = '';
         }
       }
-      // Real avg/max HR for the whole session — same source
-      // (_hrStatsForRange) used to capture entry.avgHR/entry.maxHR at
-      // save time, so what's shown here matches what gets persisted.
-      // Only shown when a HR monitor was actually connected — no
-      // fabricated values when window._hrSamples is empty.
+      // Real avg/max HR for the whole session — frozen into
+      // window._lastSessionHR right here, at Calculate time, and
+      // history.js's save flow reuses this exact object rather than
+      // recomputing _hrStatsForRange(0, Date.now()) fresh at save time.
+      // They used to be two separate calls with two different
+      // Date.now() values — if any time passed between Calculate and
+      // Save (reviewing the result, picking an RPE), more HR samples
+      // would stream in during that gap and shift the average, so the
+      // number shown here and the number that got saved could
+      // genuinely disagree even though nothing was wrong — freezing it
+      // here is what actually guarantees they always match.
       const _hrAvgMaxEl = document.getElementById('resHRAvgMax');
       if (_hrAvgMaxEl) {
         const _sessionHR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
+        window._lastSessionHR = _sessionHR;
         _hrAvgMaxEl.innerText = _sessionHR ? `avg ${_sessionHR.avg} · max ${_sessionHR.max} bpm` : '';
       }
     } else {
       _aeroCard.style.display = 'none';
+      window._lastSessionHR = null;
       const _metMinEl = document.getElementById('resMetMinutes');
       if (_metMinEl) _metMinEl.innerText = '0'; // now the card's own hero value (Cardio Strain), so it needs an explicit zero here rather than blanking — unlike before, an empty hero number would look broken instead of just disappearing
     }
@@ -1791,13 +1799,24 @@ function calculateGlobalPhysics() {
           if (inst.cardioType === 'du') duReps += inst.totalM; // totalM is a rep count for DU, not meters
         });
       } catch (e) {}
+      // Sensor-measured mechanical work (WitMotion VBT pod) is
+      // authoritative for eRaw's numerator specifically when the pod
+      // tracked at least one rep this session — a real measured
+      // displacement beats an assumed one. tw itself is deliberately
+      // left untouched here: the Mechanical Work card and Force Bias
+      // both read tw elsewhere in this function, and neither was part
+      // of this request — only eRaw's own workKJ input changes.
+      const vbtWorkKJ = window._vbtSessionWorkKJ || 0;
+      const usingSensorWork = vbtWorkKJ > 0;
+      const eRawWorkKJ = usingSensorWork ? vbtWorkKJ : tw;
       let modality = null;
-      if (tw > 0) modality = 'MIXED';
+      if (eRawWorkKJ > 0) modality = 'MIXED';
       else if (runMeters > 0) modality = 'LOCO_RUN';
       else if (duReps > 0) modality = 'LOCO_DU';
       if (modality === 'MIXED') {
-        const v = tw / liveMetMinutes;
-        eRawDisplay = { value: v, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${v.toFixed(2)} kJ of mechanical work.` };
+        const v = eRawWorkKJ / liveMetMinutes;
+        const sourceNote = usingSensorWork ? ' (sensor-measured)' : '';
+        eRawDisplay = { value: v, unitLabel: 'kJ / MET-min', sentence: `Every MET-min yielded ${v.toFixed(2)} kJ of mechanical work${sourceNote}.` };
       } else if (modality === 'LOCO_RUN') {
         const v = runMeters / liveMetMinutes;
         eRawDisplay = { value: v, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${v.toFixed(1)} meters of distance.` };
@@ -1814,6 +1833,45 @@ function calculateGlobalPhysics() {
         eRawCard.style.display = '';
       } else {
         eRawCard.style.display = 'none';
+      }
+    }
+
+    // Running eRaw — second, separate banner. Only meaningful (and
+    // only shown) for a MIXED session that also has real running in
+    // it — a pure LOCO_RUN session already gets this exact number as
+    // its own primary eRaw above, and a session with no real running
+    // has nothing to credit here at all.
+    const runERawCard = document.getElementById('resRunERaw-card');
+    const runERawVal = document.getElementById('resRunERaw');
+    const runERawUnit = document.getElementById('resRunERawUnit');
+    const runERawSentence = document.getElementById('resRunERawSentence');
+    let runERawDisplay = null;
+    if (typeof getRunningERawDisplay === 'function') {
+      try {
+        let runMetersForCard = 0;
+        const previewEntryForRunERaw = { blocks: serializeBlocksForTemplate(), cardioIntervalSummary: (typeof _buildCardioIntervalSummary === 'function' ? _buildCardioIntervalSummary() : null) };
+        (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(previewEntryForRunERaw) : []).forEach(inst => {
+          if (inst.cardioType === 'run') runMetersForCard += inst.totalM;
+        });
+        // Only relevant when the main banner above landed on MIXED —
+        // a LOCO_RUN session's running is already the primary eRaw,
+        // showing it again here would be pure duplication.
+        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && runMetersForCard > 0) {
+          const liveBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null;
+          const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+          const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+          runERawDisplay = getRunningERawDisplay(liveBlockSegments, runMetersForCard, hrRestVal, hrMaxVal);
+        }
+      } catch (e) {}
+    }
+    if (runERawCard) {
+      if (runERawDisplay) {
+        runERawVal.innerText = runERawDisplay.value.toFixed(1);
+        runERawUnit.innerText = runERawDisplay.unitLabel;
+        runERawSentence.innerText = runERawDisplay.sentence;
+        runERawCard.style.display = '';
+      } else {
+        runERawCard.style.display = 'none';
       }
     }
   }
