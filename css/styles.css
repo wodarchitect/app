@@ -1085,6 +1085,21 @@
     }
     .round-fab.visible { display:flex; }
     .round-fab:active { transform:translate(50%,50%) scale(.93); box-shadow:0 2px 8px rgba(59,130,246,.4); }
+    /* Undo FAB — smaller, offset above-left of the round FAB, muted
+       (not the same visual weight as the primary action) and only
+       ever visible right after a round tap. */
+    .round-fab-undo {
+      width:36px; height:36px; border-radius:50%;
+      background:var(--surface2); color:var(--text);
+      display:none; align-items:center; justify-content:center;
+      box-shadow:0 3px 10px rgba(0,0,0,.35);
+      cursor:pointer; border:1px solid var(--glass-border); font-family:inherit;
+      -webkit-tap-highlight-color:transparent;
+      position:absolute; bottom:44px; right:44px;
+      transform:translate(50%,50%);
+      z-index:11;
+    }
+    .round-fab-undo:active { transform:translate(50%,50%) scale(.92); }
     .round-fab-num { font-size:1.4rem; font-weight:900; line-height:1; }
     .round-fab-label { font-size:.48rem; opacity:.8; margin-top:1px; }
 
