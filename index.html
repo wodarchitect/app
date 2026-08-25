@@ -969,6 +969,17 @@
               <span class="round-fab-num" id="roundFabNum">0</span>
               <span class="round-fab-label">RDS</span>
             </button>
+            <!-- Undo FAB — only shown right after a round tap, and only
+                 for that one tap (see undoLastRoundTap in timer.js). An
+                 accidental tap on the round FAB above both miscounts
+                 the round AND, for a FORTIME block at its target round
+                 count, can auto-finish the block entirely — this can't
+                 undo that second part (resuming a stopped block is a
+                 much bigger, riskier change), only the count/split
+                 itself, which is the common case. -->
+            <button class="round-fab-undo" id="roundFabUndo" onclick="event.stopPropagation();undoLastRoundTap()" title="Undo last round tap" style="display:none;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+            </button>
           </div>
 
           <!-- HR card — sits below the timer for easy access during a
@@ -1196,6 +1207,19 @@
                   <span class="metric-unit" id="resERawUnit"></span>
                 </div>
                 <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;" id="resERawSentence"></div>
+              </div>
+            </div>
+            <div class="metric-card" id="resRunERaw-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span class="unit" data-i18n="hist.modal.runeraw.title" style="margin-bottom:0;">"unit">Running eRaw</span>
+                <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Distance / Strain</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
+                  <span id="resRunERaw" style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">0</span>
+                  <span class="metric-unit" id="resRunERawUnit"></span>
+                </div>
+                <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;" id="resRunERawSentence"></div>
               </div>
             </div>
             <div class="grid-2" style="gap:10px;margin-bottom:12px;">
@@ -2161,6 +2185,7 @@
 
 </script>
 <script src="js/timer.js"></script>
+<script src="js/vbt-sensor.js"></script>
 <script>
 
 </script>
