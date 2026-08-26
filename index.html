@@ -1239,8 +1239,7 @@
                   <span class="metric-unit">MET</span>
                 </div>
                 <div id="resAeroPD-note" style="font-size:.62rem;color:var(--label);margin-top:2px;"></div>
-                <div id="resHRR" style="font-size:.68rem;color:var(--text);margin-top:6px;"></div>
-                <div id="resHRAvgMax" style="font-size:.68rem;color:var(--label);margin-top:2px;"></div>
+                <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;" data-i18n="result.cvintensity.caption">How hard your cardiovascular system worked, time-weighted across the whole session.</div>
                 <div class="bm-bar-wrap" id="bm-aeropd"></div>
               </div>
               <div class="metric-card">
@@ -1253,16 +1252,11 @@
               </div>
               <div class="metric-card">
                 <span class="unit" data-i18n="result.cardio.strain">"unit">Cardio Strain</span>
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                  <div style="min-width:0;">
-                    <div style="display:flex;align-items:baseline;gap:6px;">
-                      <span class="metric-val" id="resMetMinutes">0</span>
-                      <span class="metric-unit">MET-min</span>
-                    </div>
-                    <div style="font-size:.68rem;color:var(--label);margin-top:2px;"><span id="resMC">0</span> kcal</div>
-                  </div>
-                  <div id="resMC-breakdown" style="font-size:.68rem;color:var(--label);display:none;flex-direction:column;gap:5px;min-width:0;"></div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                  <span class="metric-val" id="resMetMinutes">0</span>
+                  <span class="metric-unit">MET-min</span>
                 </div>
+                <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;" data-i18n="result.cardiostrain.caption">Total accumulated metabolic volume — cardio intensity carried across the whole session's duration, not just the average.</div>
                 <div class="bm-bar-wrap" id="bm-mc"></div>
               </div>
               <div class="metric-card">
@@ -1273,15 +1267,43 @@
                 </div>
                 <div class="bm-bar-wrap" id="bm-fb"></div>
               </div>
-              <div class="metric-card" id="resRL-card" style="display:none;justify-content:space-between;">
-                <div>
-                  <span class="unit" data-i18n="result.tech.demand">"unit">Technical Demand</span>
-                  <div class="metric-val" id="resTD" style="color:#00E676;">—</div>
-                </div>
-                <div style="font-size:.68rem;color:var(--label);margin-top:8px;">
-                  <span id="resRL">0%</span> <span id="resRL-movement"></span>
-                </div>
+              <div class="metric-card" id="resRL-card" style="display:none;">
+                <span class="unit" data-i18n="result.tech.demand">"unit">Technical Demand</span>
+                <div class="metric-val" id="resTD" style="color:#00E676;">—</div>
+                <div style="font-size:.64rem;color:var(--label);margin-top:8px;line-height:1.4;" data-i18n="result.techdemand.caption">Rep-weighted average skill complexity across all movements completed.</div>
                 <div class="bm-bar-wrap" id="bm-rl"></div>
+              </div>
+            </div>
+
+            <!-- Session Data — HR / Metabolic Cost / Relative Load, all
+                 pulled out of the 6 hero cards above so each of those
+                 stays a single value + one caption, matching Mechanical
+                 Power/Work/Force Bias's existing minimal style. Same
+                 visual treatment as the eRaw banners above (gradient +
+                 orange left border), but this card holds three distinct
+                 data groups rather than one hero number, so it's laid
+                 out as stacked labeled rows instead. -->
+            <div class="metric-card" style="margin-bottom:12px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+              <span class="unit" data-i18n="result.sessiondata.title" style="margin-bottom:10px;">Session Data</span>
+              <div id="resSessionData-hr-row" style="display:none;">
+                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.hr">Heart Rate</div>
+                <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+                  <span id="resHRAvgMax" style="font-size:.85rem;color:var(--text);font-weight:700;"></span>
+                  <span id="resHRR" style="font-size:.78rem;color:var(--label);"></span>
+                </div>
+              </div>
+              <div id="resSessionData-mc-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.mc">Metabolic Cost</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                  <span style="font-size:.95rem;color:var(--text);font-weight:800;white-space:nowrap;"><span id="resMC">0</span> kcal</span>
+                  <div id="resMC-breakdown" style="font-size:.68rem;color:var(--label);display:none;flex-direction:column;gap:5px;min-width:0;"></div>
+                </div>
+              </div>
+              <div id="resSessionData-rl-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.rl">Relative Load</div>
+                <div style="font-size:.85rem;color:var(--text);font-weight:700;">
+                  <span id="resRL">0%</span> <span id="resRL-movement" style="color:var(--label);font-weight:400;"></span>
+                </div>
               </div>
             </div>
 
