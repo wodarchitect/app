@@ -1593,8 +1593,6 @@ function calculateGlobalPhysics() {
       _aeroCard.style.display = '';
       const _aeroEl = document.getElementById('resAeroPD');
       if (_aeroEl) _aeroEl.innerText = _cvResult.met.toFixed(1);
-      const _aeroNoteEl = document.getElementById('resAeroPD-note');
-      if (_aeroNoteEl) _aeroNoteEl.innerText = _cvResult.allReal ? '' : t('aero.power.estimated');
       // MET-minutes — total accumulated metabolic volume (MET x minutes),
       // distinct from the average-intensity MET above. Grows with
       // duration even at constant intensity, unlike the average — see
@@ -1610,7 +1608,16 @@ function calculateGlobalPhysics() {
       // back to reversing met = relIntensity * vo2max / 3.5 (the
       // pace/MET-derived estimate) only when real HR data isn't
       // available, labeled "(est.)" so it's never mistaken for measured.
+      //
+      // The "(est.)" note text lives in the Session Data card's HR row
+      // now, not here — and is gated on whether %HRR SPECIFICALLY fell
+      // back to estimate (_hrrIsEstimate below), not on cvResult.allReal
+      // (whether the MET value overall is fully real). Those are
+      // genuinely different conditions: MET can be fully real (real
+      // segment HR throughout) while %HRR still estimates, if the
+      // profile's Resting HR / HR Max fields simply aren't filled in.
       const _hrrEl = document.getElementById('resHRR');
+      let _hrrIsEstimate = false;
       if (_hrrEl) {
         const _sessionHRForHRR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
         const _hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
@@ -1621,10 +1628,13 @@ function calculateGlobalPhysics() {
         } else if (vo2max > 0) {
           const pctHRR = Math.max(0, Math.min(100, (_cvResult.met * 3.5 / vo2max) * 100));
           _hrrEl.innerText = `${Math.round(pctHRR)}% HRR (est.)`;
+          _hrrIsEstimate = true;
         } else {
           _hrrEl.innerText = '';
         }
       }
+      const _aeroNoteEl = document.getElementById('resAeroPD-note');
+      if (_aeroNoteEl) _aeroNoteEl.innerText = _hrrIsEstimate ? t('aero.power.estimated') : '';
       // Real avg/max HR for the whole session — frozen into
       // window._lastSessionHR right here, at Calculate time, and
       // history.js's save flow reuses this exact object rather than
@@ -1636,18 +1646,37 @@ function calculateGlobalPhysics() {
       // number shown here and the number that got saved could
       // genuinely disagree even though nothing was wrong — freezing it
       // here is what actually guarantees they always match.
-      const _hrAvgMaxEl = document.getElementById('resHRAvgMax');
-      if (_hrAvgMaxEl) {
+      const _hrAvgEl = document.getElementById('resHRAvg');
+      const _hrMaxEl = document.getElementById('resHRMax');
+      const _hrAvgMaxLineEl = document.getElementById('resHRAvgMax-line');
+      if (_hrAvgEl || _hrMaxEl) {
         const _sessionHR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
         window._lastSessionHR = _sessionHR;
-        _hrAvgMaxEl.innerText = _sessionHR ? `avg ${_sessionHR.avg} · max ${_sessionHR.max} bpm` : '';
-        // HR row in the Session Data card — same condition (real HR
-        // data present) that used to gate this content's visibility
-        // implicitly, back when it lived inside the Cardio Intensity
-        // card itself (which is always hidden/shown as a whole based
-        // on _cvResult existing, not on HR specifically existing).
+        if (_hrAvgEl) _hrAvgEl.innerText = _sessionHR ? _sessionHR.avg : '0';
+        if (_hrMaxEl) _hrMaxEl.innerText = _sessionHR ? _sessionHR.max : '0';
+        // Avg/Max BPM line hides on its own when there's no real HR —
+        // showing "0 / 0 bpm" would be worse than not showing it — but
+        // the row itself must NOT hide on that same condition (see
+        // below): %HRR can still have a real value here, since this
+        // whole-session avg/max HR check is separate from the
+        // per-segment source _hrrEl's own real-vs-estimate branch used.
+        if (_hrAvgMaxLineEl) _hrAvgMaxLineEl.style.display = _sessionHR ? '' : 'none';
+        // HR row in the Session Data card shows if EITHER real avg/max
+        // HR exists OR %HRR has any value at all (real or estimated) —
+        // previously gated on real avg/max HR alone, which incorrectly
+        // hid the ESTIMATED %HRR too whenever no HR strap was
+        // connected, which is exactly the scenario that estimate
+        // exists to cover. _hrrEl was already populated above,
+        // regardless of order, since both blocks run inside the same
+        // enclosing if (_cvResult) scope.
+        const _hrrHasContent = !!(_hrrEl && _hrrEl.innerText);
         const _hrRowEl = document.getElementById('resSessionData-hr-row');
-        if (_hrRowEl) _hrRowEl.style.display = _sessionHR ? '' : 'none';
+        if (_hrRowEl) _hrRowEl.style.display = (_sessionHR || _hrrHasContent) ? '' : 'none';
+        // Relative Load spans both grid columns when HR is absent —
+        // otherwise it'd sit alone in column 2 with an empty gap to its
+        // left where Heart Rate would have been.
+        const _rlRowEl = document.getElementById('resSessionData-rl-row');
+        if (_rlRowEl) _rlRowEl.style.gridColumn = (_sessionHR || _hrrHasContent) ? '2' : '1 / -1';
       }
     } else {
       _aeroCard.style.display = 'none';
@@ -1656,6 +1685,8 @@ function calculateGlobalPhysics() {
       if (_metMinEl) _metMinEl.innerText = '0'; // now the card's own hero value (Cardio Strain), so it needs an explicit zero here rather than blanking — unlike before, an empty hero number would look broken instead of just disappearing
       const _hrRowElHide = document.getElementById('resSessionData-hr-row');
       if (_hrRowElHide) _hrRowElHide.style.display = 'none';
+      const _rlRowElHide = document.getElementById('resSessionData-rl-row');
+      if (_rlRowElHide) _rlRowElHide.style.gridColumn = '1 / -1';
     }
   }
   window._lastCVEndurance = _cvResult || null; // full object (met + metMinutes), not just met — the session radar needs both
@@ -1683,6 +1714,9 @@ function calculateGlobalPhysics() {
     }
   }
   const breakdown = document.getElementById('resMC-breakdown');
+  const barMech = document.getElementById('resMC-bar-mech');
+  const barAero = document.getElementById('resMC-bar-aero');
+  const barOver = document.getElementById('resMC-bar-over');
   if (breakdown) {
     // Check if workout has cardio movements but no cardio PRs set
     const hasCardioMov = [...document.querySelectorAll('.wod-block .movement-block')].some(mv => {
@@ -1700,26 +1734,44 @@ function calculateGlobalPhysics() {
     const sessionsNeeded = Math.max(0, 5 - recentPD2.length);
     const overheadPending = vo2max && sessionsNeeded > 0;
     const overheadNoVO2 = !vo2max;
-    // Small colored-dot row, matching a single breakdown line's label +
-    // value. No white-space:nowrap and short labels (Mech/Aero/Over) —
-    // this card is now narrower (hero + breakdown split side-by-side),
-    // so an unbreakable "Mechanical: 49 kcal" line would overflow the
-    // same way History's equivalent card did before that got fixed.
-    const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
+    // Legend item — colored dot, muted label, bold value — matching the
+    // segmented bar directly above it. Value styled distinctly from the
+    // label now that this sits under a visual bar rather than being the
+    // only representation of the breakdown.
+    const dotRow = (color, label, value) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span style="color:var(--label);">${label} <span style="color:var(--text);font-weight:700;">${value}</span></span></div>`;
     if (cardioKcal > 0 || overheadKcalDisp > 0 || overheadPending || overheadNoVO2) {
-      let rows = [dotRow('var(--brand)', `Mech: ${mechKcal} kcal`), dotRow('var(--success)', `Aero: ${cardioKcal} kcal`)];
-      if (overheadKcalDisp > 0) rows.push(dotRow('#3B82F6', `${overheadLabelText}: ${overheadKcalDisp} kcal`));
-      if (overheadPending) rows.push(dotRow('#3B82F6', `${t('overhead.pending.1')} ${sessionsNeeded} ${t('overhead.pending.2')}`));
-      if (overheadNoVO2) rows.push(dotRow('#3B82F6', t('overhead.no.vo2')));
+      let rows = [dotRow('#FF6B35', 'Mech', `${mechKcal} kcal`), dotRow('#22C55E', 'Aero', `${cardioKcal} kcal`)];
+      if (overheadKcalDisp > 0) rows.push(dotRow('#3B82F6', overheadLabelText, `${overheadKcalDisp} kcal`));
+      if (overheadPending) rows.push(dotRow('#3B82F6', `${t('overhead.pending.1')} ${sessionsNeeded} ${t('overhead.pending.2')}`, ''));
+      if (overheadNoVO2) rows.push(dotRow('#3B82F6', t('overhead.no.vo2'), ''));
       breakdown.innerHTML = rows.join('');
       breakdown.style.display = 'flex';
       breakdown.style.color = 'var(--label)';
+      // Segmented bar — only meaningful when all three components are
+      // real numbers with a genuine total to divide by; the
+      // pending/no-VO2 rows above have no clean split to visualize, so
+      // the bar collapses to a flat, empty track in those cases rather
+      // than showing a misleadingly confident proportion.
+      const barTotal = mechKcal + cardioKcal + overheadKcalDisp;
+      if (barMech && barAero && barOver) {
+        if (barTotal > 0) {
+          barMech.style.width = `${(mechKcal / barTotal) * 100}%`;
+          barAero.style.width = `${(cardioKcal / barTotal) * 100}%`;
+          barOver.style.width = `${(overheadKcalDisp / barTotal) * 100}%`;
+        } else {
+          barMech.style.width = '0%';
+          barAero.style.width = '0%';
+          barOver.style.width = '0%';
+        }
+      }
     } else if (hasCardioMov && !hasCardioPRs) {
       breakdown.textContent = '⚠️ Add Cardio PRs in Profile to include aerobic energy';
       breakdown.style.display = 'flex';
       breakdown.style.color = 'var(--brand)';
+      if (barMech && barAero && barOver) { barMech.style.width = '0%'; barAero.style.width = '0%'; barOver.style.width = '0%'; }
     } else {
       breakdown.style.display = 'none';
+      if (barMech && barAero && barOver) { barMech.style.width = '0%'; barAero.style.width = '0%'; barOver.style.width = '0%'; }
     }
   }
   const pdBreakdown = document.getElementById('resPD-breakdown');
@@ -1738,16 +1790,21 @@ function calculateGlobalPhysics() {
   // later, rather than always using whatever bodyweight is on the profile *now*.
   window._lastDurationSec = tas;
   window._lastBodyweight = bw;
-  // Relative Loading — always show, 0% if no 1RM matched
+  // Relative Loading — always show, 0% if no 1RM matched. Value now
+  // lives in the Session Data card's RL column (bold hero number, plain
+  // white/text-colored to match HR and MC's hero numbers there) rather
+  // than as a small secondary line under Technical Demand — the old
+  // tier-based color coding doesn't fit that new consistent hierarchy,
+  // so it's dropped here rather than carried over.
   const rlCard = document.getElementById('resRL-card');
   const rlVal  = document.getElementById('resRL');
   const rlMoveEl = document.getElementById('resRL-movement');
   if (rlCard && rlVal) {
     const avgRL = rmMax > 0 ? Math.round(rmMax) : 0;
-    rlVal.innerText = avgRL + '%';
-    if (rlMoveEl) rlMoveEl.innerText = (avgRL > 0 && rmMaxMovement) ? `${t('result.of.1rm')} ${rmMaxMovement}` : '';
+    rlVal.innerText = avgRL;
+    if (rlMoveEl) rlMoveEl.innerText = (avgRL > 0 && rmMaxMovement) ? rmMaxMovement : '';
     if (window._lastSessionRadar) window._lastSessionRadar.rl = avgRL;
-    rlVal.style.color = avgRL >= 90 ? '#EF4444' : avgRL >= 75 ? '#F59E0B' : avgRL >= 50 ? '#22C55E' : 'var(--text)';
+    rlVal.style.color = 'var(--text)'; // explicit reset — a prior session's now-removed tier coloring must not persist onto this one
     rlCard.style.display = '';
   }
   // Bodyweight Work % — share of total mechanical work that came from

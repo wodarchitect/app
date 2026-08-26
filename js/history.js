@@ -1583,11 +1583,23 @@ function openHistoryModal(idx) {
         }
         let rlContext = null;
         try { rlContext = (typeof reconstructRL === 'function') ? reconstructRL(w, null, true) : null; } catch (e) {}
-        const dotRow = (color, label) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span>${label}</span></div>`;
+        // Legend item — colored dot, muted label, bold value — matching
+        // the segmented bar directly above it in the Session Data card.
+        const dotRow = (color, label, value) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span style="color:var(--label);">${label} <span style="color:var(--text);font-weight:700;">${value}</span></span></div>`;
         const mcRows = [];
-        if (w.mc_mech != null) mcRows.push(dotRow('var(--brand)', `Mech: ${w.mc_mech} kcal`));
-        if (w.mc_aero) mcRows.push(dotRow('var(--success)', `Aero: ${w.mc_aero} kcal`));
-        if (w.mc_overhead) mcRows.push(dotRow('#3B82F6', `Over (est.): ${w.mc_overhead} kcal`));
+        const mcMechVal = w.mc_mech != null ? w.mc_mech : 0;
+        const mcAeroVal = w.mc_aero || 0;
+        const mcOverVal = w.mc_overhead || 0;
+        if (w.mc_mech != null) mcRows.push(dotRow('#FF6B35', 'Mech', `${w.mc_mech} kcal`));
+        if (w.mc_aero) mcRows.push(dotRow('#22C55E', 'Aero', `${w.mc_aero} kcal`));
+        if (w.mc_overhead) mcRows.push(dotRow('#3B82F6', 'Over (est.)', `${w.mc_overhead} kcal`));
+        // Bar segment widths — only meaningful when there's a genuine
+        // total to divide by; collapses to an empty track otherwise
+        // rather than showing a misleading proportion.
+        const mcBarTotal = mcMechVal + mcAeroVal + mcOverVal;
+        const mcMechPct = mcBarTotal > 0 ? (mcMechVal / mcBarTotal) * 100 : 0;
+        const mcAeroPct = mcBarTotal > 0 ? (mcAeroVal / mcBarTotal) * 100 : 0;
+        const mcOverPct = mcBarTotal > 0 ? (mcOverVal / mcBarTotal) * 100 : 0;
 
         // Scoped to just these History Modal cards via inline style —
         // .metric-card's orange left-accent box-shadow is shared with
@@ -1668,7 +1680,6 @@ function openHistoryModal(idx) {
               <span class="metric-unit">MET</span>
             </div>
             <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('result.cvintensity.caption') || 'How hard your cardiovascular system worked, time-weighted across the whole session.'}</div>
-            ${!cvResult.allReal ? `<div style="font-size:.6rem;color:var(--label);margin-top:4px;">${t('aero.power.estimated')}</div>` : ''}
           </div>` : ''}
           <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.total.work')}</span>
@@ -1702,24 +1713,42 @@ function openHistoryModal(idx) {
         </div>
         <div class="metric-card" style="margin-top:10px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <span class="unit" style="margin-bottom:10px;">${t('result.sessiondata.title') || 'Session Data'}</span>
-          ${w.avgHR != null ? `<div>
-            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.hr') || 'Heart Rate'}</div>
-            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
-              <span style="font-size:.85rem;color:var(--text);font-weight:700;">avg ${w.avgHR} · max ${w.maxHR ?? '—'} bpm</span>
-              ${hrrDisplay ? `<span style="font-size:.78rem;color:var(--label);">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' (est.)'}</span>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px;">
+            ${(w.avgHR != null || hrrDisplay) ? `<div>
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 21s-7-4.5-9.5-9C1 8.5 2.5 5 6 5c2 0 3.5 1.5 4 2.5.5-1 2-2.5 4-2.5 3.5 0 5 3.5 3.5 7-2.5 4.5-9.5 9-9.5 9z"/></svg>
+                <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;">${t('result.sessiondata.hr') || 'Heart Rate'}</span>
+              </div>
+              ${w.avgHR != null ? `<div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                ${w.avgHR}<span style="font-size:.68rem;color:var(--label);font-weight:600;"> / ${w.maxHR ?? '—'} bpm</span>
+              </div>` : ''}
+              ${hrrDisplay ? `<div style="font-size:.7rem;color:var(--label);margin-top:6px;">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' (est.)'}</div>` : ''}
+              ${hrrDisplay && !hrrDisplay.isReal ? `<div style="font-size:.6rem;color:var(--label);margin-top:5px;line-height:1.4;">${t('aero.power.estimated')}</div>` : ''}
+            </div>` : ''}
+            <div style="grid-column:${(w.avgHR != null || hrrDisplay) ? '2' : '1 / -1'};">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 8v8M2 10v4M22 10v4M20 8v8M8 12h8"/></svg>
+                <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;">${t('result.sessiondata.rl') || 'Relative Load'}</span>
+              </div>
+              <div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                ${rlVal}<span style="font-size:.68rem;color:var(--label);font-weight:600;"> %1RM</span>
+              </div>
+              ${rlContext?.movementName ? `<div style="font-size:.7rem;color:var(--label);margin-top:6px;">${rlContext.movementName}</div>` : ''}
             </div>
-          </div>` : ''}
-          <div style="${w.avgHR != null ? 'margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);' : ''}">
-            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.mc') || 'Metabolic Cost'}</div>
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-              <span style="font-size:.95rem;color:var(--text);font-weight:800;white-space:nowrap;">${mcVal.toFixed(0)} kcal</span>
-              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;min-width:0;">${mcRows.join('')}</div>` : ''}
-            </div>
-          </div>
-          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
-            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.rl') || 'Relative Load'}</div>
-            <div style="font-size:.85rem;color:var(--text);font-weight:700;">
-              ${rlVal}% ${rlContext?.movementName ? `<span style="color:var(--label);font-weight:400;">${t('result.of.1rm')} ${rlContext.movementName}</span>` : ''}
+            <div style="grid-column:1/-1;padding-top:14px;border-top:1px solid var(--glass-border);">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c0-2-1-3-1-3s2 1 2 4a5 5 0 0 1-10 0c0-5 4-6 4-10z"/></svg>
+                <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;">${t('result.sessiondata.mc') || 'Metabolic Cost'}</span>
+              </div>
+              <div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                ${mcVal.toFixed(0)}<span style="font-size:.68rem;color:var(--label);font-weight:600;"> kcal</span>
+              </div>
+              <div style="display:flex;width:100%;height:8px;border-radius:20px;overflow:hidden;background:var(--glass-inner);margin-top:10px;">
+                <div style="background:#FF6B35;height:100%;width:${mcMechPct}%;"></div>
+                <div style="background:#22C55E;height:100%;width:${mcAeroPct}%;"></div>
+                <div style="background:#3B82F6;height:100%;width:${mcOverPct}%;"></div>
+              </div>
+              ${mcRows.length ? `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;">${mcRows.join('')}</div>` : ''}
             </div>
           </div>
         </div>`;
