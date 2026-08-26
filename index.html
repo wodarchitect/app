@@ -1238,7 +1238,6 @@
                   <span class="metric-val" id="resAeroPD">0</span>
                   <span class="metric-unit">MET</span>
                 </div>
-                <div id="resAeroPD-note" style="font-size:.62rem;color:var(--label);margin-top:2px;"></div>
                 <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;" data-i18n="result.cvintensity.caption">How hard your cardiovascular system worked, time-weighted across the whole session.</div>
                 <div class="bm-bar-wrap" id="bm-aeropd"></div>
               </div>
@@ -1285,24 +1284,42 @@
                  out as stacked labeled rows instead. -->
             <div class="metric-card" style="margin-bottom:12px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
               <span class="unit" data-i18n="result.sessiondata.title" style="margin-bottom:10px;">Session Data</span>
-              <div id="resSessionData-hr-row" style="display:none;">
-                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.hr">Heart Rate</div>
-                <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
-                  <span id="resHRAvgMax" style="font-size:.85rem;color:var(--text);font-weight:700;"></span>
-                  <span id="resHRR" style="font-size:.78rem;color:var(--label);"></span>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px;">
+                <div id="resSessionData-hr-row" style="display:none;">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 21s-7-4.5-9.5-9C1 8.5 2.5 5 6 5c2 0 3.5 1.5 4 2.5.5-1 2-2.5 4-2.5 3.5 0 5 3.5 3.5 7-2.5 4.5-9.5 9-9.5 9z"/></svg>
+                    <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;" data-i18n="result.sessiondata.hr">Heart Rate</span>
+                  </div>
+                  <div id="resHRAvgMax-line" style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                    <span id="resHRAvg">0</span><span style="font-size:.68rem;color:var(--label);font-weight:600;"> / <span id="resHRMax">0</span> bpm</span>
+                  </div>
+                  <div id="resHRR" style="font-size:.7rem;color:var(--label);margin-top:6px;"></div>
+                  <div id="resAeroPD-note" style="font-size:.6rem;color:var(--label);margin-top:5px;line-height:1.4;"></div>
                 </div>
-              </div>
-              <div id="resSessionData-mc-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
-                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.mc">Metabolic Cost</div>
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                  <span style="font-size:.95rem;color:var(--text);font-weight:800;white-space:nowrap;"><span id="resMC">0</span> kcal</span>
-                  <div id="resMC-breakdown" style="font-size:.68rem;color:var(--label);display:none;flex-direction:column;gap:5px;min-width:0;"></div>
+                <div id="resSessionData-rl-row" style="grid-column:2;">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M4 8v8M2 10v4M22 10v4M20 8v8M8 12h8"/></svg>
+                    <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;" data-i18n="result.sessiondata.rl">Relative Load</span>
+                  </div>
+                  <div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                    <span id="resRL">0</span><span style="font-size:.68rem;color:var(--label);font-weight:600;"> %1RM</span>
+                  </div>
+                  <div id="resRL-movement" style="font-size:.7rem;color:var(--label);margin-top:6px;"></div>
                 </div>
-              </div>
-              <div id="resSessionData-rl-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
-                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;" data-i18n="result.sessiondata.rl">Relative Load</div>
-                <div style="font-size:.85rem;color:var(--text);font-weight:700;">
-                  <span id="resRL">0%</span> <span id="resRL-movement" style="color:var(--label);font-weight:400;"></span>
+                <div id="resSessionData-mc-row" style="grid-column:1/-1;padding-top:14px;border-top:1px solid var(--glass-border);">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--label)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c0-2-1-3-1-3s2 1 2 4a5 5 0 0 1-10 0c0-5 4-6 4-10z"/></svg>
+                    <span style="font-size:.6rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;" data-i18n="result.sessiondata.mc">Metabolic Cost</span>
+                  </div>
+                  <div style="font-size:1rem;font-weight:800;color:var(--text);line-height:1;">
+                    <span id="resMC">0</span><span style="font-size:.68rem;color:var(--label);font-weight:600;"> kcal</span>
+                  </div>
+                  <div style="display:flex;width:100%;height:8px;border-radius:20px;overflow:hidden;background:var(--glass-inner);margin-top:10px;">
+                    <div id="resMC-bar-mech" style="background:#FF6B35;height:100%;width:0%;"></div>
+                    <div id="resMC-bar-aero" style="background:#22C55E;height:100%;width:0%;"></div>
+                    <div id="resMC-bar-over" style="background:#3B82F6;height:100%;width:0%;"></div>
+                  </div>
+                  <div id="resMC-breakdown" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;"></div>
                 </div>
               </div>
             </div>
