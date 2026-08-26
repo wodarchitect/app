@@ -1641,12 +1641,21 @@ function calculateGlobalPhysics() {
         const _sessionHR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
         window._lastSessionHR = _sessionHR;
         _hrAvgMaxEl.innerText = _sessionHR ? `avg ${_sessionHR.avg} · max ${_sessionHR.max} bpm` : '';
+        // HR row in the Session Data card — same condition (real HR
+        // data present) that used to gate this content's visibility
+        // implicitly, back when it lived inside the Cardio Intensity
+        // card itself (which is always hidden/shown as a whole based
+        // on _cvResult existing, not on HR specifically existing).
+        const _hrRowEl = document.getElementById('resSessionData-hr-row');
+        if (_hrRowEl) _hrRowEl.style.display = _sessionHR ? '' : 'none';
       }
     } else {
       _aeroCard.style.display = 'none';
       window._lastSessionHR = null;
       const _metMinEl = document.getElementById('resMetMinutes');
       if (_metMinEl) _metMinEl.innerText = '0'; // now the card's own hero value (Cardio Strain), so it needs an explicit zero here rather than blanking — unlike before, an empty hero number would look broken instead of just disappearing
+      const _hrRowElHide = document.getElementById('resSessionData-hr-row');
+      if (_hrRowElHide) _hrRowElHide.style.display = 'none';
     }
   }
   window._lastCVEndurance = _cvResult || null; // full object (met + metMinutes), not just met — the session radar needs both
@@ -1855,12 +1864,13 @@ function calculateGlobalPhysics() {
         });
         // Only relevant when the main banner above landed on MIXED —
         // a LOCO_RUN session's running is already the primary eRaw,
-        // showing it again here would be pure duplication.
+        // showing it again here would be pure duplication. Shares
+        // liveMetMinutes as its denominator — the exact same value the
+        // mechanical eRaw above just used — rather than isolating a
+        // running-only denominator, so the two banners are genuinely
+        // comparable on the same cost basis.
         if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && runMetersForCard > 0) {
-          const liveBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null;
-          const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
-          const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
-          runERawDisplay = getRunningERawDisplay(liveBlockSegments, runMetersForCard, hrRestVal, hrMaxVal);
+          runERawDisplay = getRunningERawDisplay(runMetersForCard, liveMetMinutes);
         }
       } catch (e) {}
     }

@@ -357,53 +357,28 @@ function getERawDisplay(entry) {
 // mechanical work against the WHOLE session's cardio cost — real
 // running done alongside lifting shows up purely as a cost that
 // dilutes that number, with no credit anywhere for the running itself.
-// This gives running the same distance/MET-min formula a pure-running
-// (LOCO_RUN) session already gets, computed from the running segment
-// specifically rather than requiring the whole session to be pure
-// cardio. Returns null whenever there's no real running to credit —
-// never fabricates a number for a session that didn't actually
-// include it.
-function getRunningERawDisplay(blockSegments, runDistanceM, hrRestVal, hrMaxVal) {
+//
+// Denominator is deliberately the SAME whole-session MET-minutes the
+// mechanical eRaw above already uses (sessionMetMinutes), not the
+// running segment's own MET-minutes in isolation — an earlier version
+// of this used a running-only denominator, which was inconsistent with
+// mechanical eRaw's denominator already including the running
+// segment's own contribution. Two numerators (mechanical work,
+// distance) sharing one denominator (total session strain) is what
+// makes the two banners genuinely comparable, rather than each
+// measuring cost on a different basis. This also removes the need for
+// a separate per-segment HR/VO2max MET estimate entirely — the shared
+// denominator is already the same validated metMinutes value the rest
+// of the app uses, not a new estimate with its own real-vs-fallback
+// uncertainty.
+function getRunningERawDisplay(runDistanceM, sessionMetMinutes) {
   if (!runDistanceM || runDistanceM <= 0) return null;
-  const runSegs = (blockSegments || []).flat().filter(s => s && s.type === 'run');
-  if (!runSegs.length) return null;
-  const totalDurationSec = runSegs.reduce((sum, s) => sum + (s.durationSec || 0), 0);
-  if (totalDurationSec <= 0) return null;
-
-  // Real Karvonen MET when the run segment has real HR AND the
-  // athlete's profile Resting HR / HR Max are both set — same
-  // real-vs-estimate convention already used for %HRR elsewhere in
-  // this app. Falls back to the Run movement's own defined MET
-  // constant (MASTER_DB) otherwise, duration-weighted across segments
-  // if there's more than one real-HR run segment.
-  let metVal = null, isEstimate = false;
-  const realSegs = runSegs.filter(s => s.source === 'hr_segment' && s.avgHR != null);
-  if (realSegs.length && hrRestVal && hrMaxVal && hrMaxVal > hrRestVal) {
-    let weightedSum = 0, weightedDur = 0;
-    realSegs.forEach(s => {
-      const relIntensity = Math.max(0, Math.min(1, (s.avgHR - hrRestVal) / (hrMaxVal - hrRestVal)));
-      weightedSum += relIntensity * s.durationSec;
-      weightedDur += s.durationSec;
-    });
-    if (weightedDur > 0) {
-      const vo2 = (typeof getEffectiveVO2max === 'function') ? (getEffectiveVO2max()?.value || 0) : 0;
-      if (vo2 > 0) metVal = (weightedSum / weightedDur) * vo2 / 3.5;
-    }
-  }
-  if (!metVal) {
-    const runDef = (typeof MASTER_DB !== 'undefined') ? Object.values(MASTER_DB).find(m => m.cardio === 'run') : null;
-    metVal = runDef?.met || 10; // MASTER_DB's own Run constant, or a sane fallback if that lookup ever fails
-    isEstimate = true;
-  }
-  if (!metVal || metVal <= 0) return null;
-
-  const metMinutes = metVal * (totalDurationSec / 60);
-  if (metMinutes <= 0) return null;
-  const value = runDistanceM / metMinutes;
+  if (!sessionMetMinutes || sessionMetMinutes <= 0) return null;
+  const value = runDistanceM / sessionMetMinutes;
   return {
     value,
     unitLabel: 'm / MET-min',
-    sentence: `Running: every MET-min yielded ${value.toFixed(1)} meters of distance${isEstimate ? ' (estimated MET)' : ''}.`
+    sentence: `Running: every MET-min of this session's total strain yielded ${value.toFixed(1)} meters of distance.`
   };
 }
 

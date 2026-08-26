@@ -330,6 +330,32 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
   entry.vbt_work_kj = entry.vbtUsed ? window._vbtSessionWorkKJ : null;
   entry.vbt_rep_count = entry.vbtUsed ? window._vbtSessionRepCount : null;
   _updateERawForEntry(entry);
+  // Session Signature radar — computed and saved right here, at the
+  // moment of save, using the exact same computeRadarValuesForSession()
+  // + getRadarMaxes() normalization the "Update Session Signatures to
+  // New Axes" repair button uses. Previously entry.radar was NEVER set
+  // at save time anywhere in the app — the only place that ever wrote
+  // it was that repair function — so every single new session relied
+  // on someone noticing and re-running the repair button after the
+  // fact, and the button would inevitably reappear after every save
+  // since the just-saved session always failed its own up-to-date
+  // check. This closes that gap at the source; the repair button still
+  // exists for genuinely old, pre-existing sessions saved before this
+  // fix, but a session saved from here on shouldn't ever need it.
+  try {
+    const _radarRaw = computeRadarValuesForSession(entry);
+    const _radarMaxes = getRadarMaxes();
+    entry.radar = {
+      pd: Math.min(1, Math.max(0, _radarRaw.pd / _radarMaxes.pd)),
+      wd: Math.min(1, Math.max(0, _radarRaw.wd / _radarMaxes.wd)),
+      cvIntensity: Math.min(1, Math.max(0, _radarRaw.cvIntensity / _radarMaxes.cvIntensity)),
+      fb: Math.min(1, Math.max(0, _radarRaw.fb / _radarMaxes.fb)),
+      internalLoad: Math.min(1, Math.max(0, _radarRaw.internalLoad / _radarMaxes.internalLoad)),
+      td: Math.min(1, Math.max(0, _radarRaw.td / _radarMaxes.td)),
+      _normalised: true,
+      _v: 3
+    };
+  } catch (e) { entry.radar = null; }
   {
     const hist = getHistory();
     hist.unshift(entry);
@@ -1582,17 +1608,20 @@ function openHistoryModal(idx) {
         // main eRaw above landed on MIXED (a pure LOCO_RUN session's
         // running is already its own primary eRaw, this would just
         // duplicate it) and the entry has real run distance to credit.
+        // Shares cvResult.metMinutes (already computed above for the
+        // Cardio Intensity card) as its denominator — the exact same
+        // value the mechanical eRaw above uses — rather than isolating
+        // a running-only denominator, so the two banners are genuinely
+        // comparable on the same cost basis.
         let runERawDisplay = null;
-        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && typeof getRunningERawDisplay === 'function') {
+        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && cvResult && typeof getRunningERawDisplay === 'function') {
           try {
             let runMetersForCard = 0;
             (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(w) : []).forEach(inst => {
               if (inst.cardioType === 'run') runMetersForCard += inst.totalM;
             });
             if (runMetersForCard > 0) {
-              const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
-              const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
-              runERawDisplay = getRunningERawDisplay(w.blockSegments, runMetersForCard, hrRestVal, hrMaxVal);
+              runERawDisplay = getRunningERawDisplay(runMetersForCard, cvResult.metMinutes);
             }
           } catch (e) {}
         }
@@ -1612,7 +1641,7 @@ function openHistoryModal(idx) {
         </div>` : ''}
         ${runERawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="unit" style="margin-bottom:0;">${t('hist.modal.runeraw.title') || 'Running eRaw'}</span>
+            <span class="unit" style="margin-bottom:0;">${t('hist.modal.runeraw.title') || 'Running Efficiency'}</span>
             <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Distance / Strain</span>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
@@ -1634,20 +1663,12 @@ function openHistoryModal(idx) {
           </div>
           ${cvResult ? `<div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.aero.power')}</span>
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-              <div style="min-width:0;">
-                <div style="display:flex;align-items:baseline;gap:6px;">
-                  <span class="metric-val">${cvResult.met.toFixed(1)}</span>
-                  <span class="metric-unit">MET</span>
-                </div>
-                ${hrrDisplay ? `<div style="font-size:.68rem;color:var(--text);margin-top:6px;">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' <span style="color:var(--label);">(est.)</span>'}</div>` : ''}
-              </div>
-              ${w.avgHR != null ? `<div style="font-size:.68rem;color:var(--label);text-align:right;min-width:0;">
-                <div>Average HR: ${w.avgHR} BPM</div>
-                <div style="margin-top:2px;">Max HR: ${w.maxHR ?? '—'} BPM</div>
-              </div>` : ''}
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val">${cvResult.met.toFixed(1)}</span>
+              <span class="metric-unit">MET</span>
             </div>
-            ${!cvResult.allReal ? `<div style="font-size:.62rem;color:var(--label);margin-top:2px;">${t('aero.power.estimated')}</div>` : ''}
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('result.cvintensity.caption') || 'How hard your cardiovascular system worked, time-weighted across the whole session.'}</div>
+            ${!cvResult.allReal ? `<div style="font-size:.6rem;color:var(--label);margin-top:4px;">${t('aero.power.estimated')}</div>` : ''}
           </div>` : ''}
           <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.total.work')}</span>
@@ -1659,16 +1680,11 @@ function openHistoryModal(idx) {
           </div>
           <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.cardio.strain')}</span>
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-              <div style="min-width:0;">
-                <div style="display:flex;align-items:baseline;gap:6px;">
-                  <span class="metric-val">${cvResult ? Math.round(cvResult.metMinutes) : 0}</span>
-                  <span class="metric-unit">MET-min</span>
-                </div>
-                <div style="font-size:.68rem;color:var(--label);margin-top:2px;">${mcVal.toFixed(0)} kcal</div>
-              </div>
-              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;min-width:0;">${mcRows.join('')}</div>` : ''}
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span class="metric-val">${cvResult ? Math.round(cvResult.metMinutes) : 0}</span>
+              <span class="metric-unit">MET-min</span>
             </div>
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('result.cardiostrain.caption') || 'Total accumulated metabolic volume — cardio intensity carried across the whole session\'s duration, not just the average.'}</div>
           </div>
           <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.force.bias2')}</span>
@@ -1678,13 +1694,32 @@ function openHistoryModal(idx) {
             </div>
             <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('hist.modal.metric.fb.caption') || 'Load moved per unit of work — higher means heavier, slower reps'}</div>
           </div>
-          <div class="metric-card" style="${noAccent}justify-content:space-between;">
-            <div>
-              <span class="unit">${t('result.tech.demand')}</span>
-              <div class="metric-val" style="color:#00E676;">${tdVal != null ? tdVal + ' / 5' : '—'}</div>
+          <div class="metric-card" style="${noAccent}">
+            <span class="unit">${t('result.tech.demand')}</span>
+            <div class="metric-val" style="color:#00E676;">${tdVal != null ? tdVal + ' / 5' : '—'}</div>
+            <div style="font-size:.64rem;color:var(--label);margin-top:6px;line-height:1.4;">${t('result.techdemand.caption') || 'Rep-weighted average skill complexity across all movements completed.'}</div>
+          </div>
+        </div>
+        <div class="metric-card" style="margin-top:10px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+          <span class="unit" style="margin-bottom:10px;">${t('result.sessiondata.title') || 'Session Data'}</span>
+          ${w.avgHR != null ? `<div>
+            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.hr') || 'Heart Rate'}</div>
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:.85rem;color:var(--text);font-weight:700;">avg ${w.avgHR} · max ${w.maxHR ?? '—'} bpm</span>
+              ${hrrDisplay ? `<span style="font-size:.78rem;color:var(--label);">${hrrDisplay.pct}% HRR${hrrDisplay.isReal ? '' : ' (est.)'}</span>` : ''}
             </div>
-            <div style="font-size:.68rem;color:var(--label);margin-top:8px;">
-              ${rlVal}% ${rlContext?.movementName ? `${t('result.of.1rm')} ${rlContext.movementName}` : ''}
+          </div>` : ''}
+          <div style="${w.avgHR != null ? 'margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);' : ''}">
+            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.mc') || 'Metabolic Cost'}</div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+              <span style="font-size:.95rem;color:var(--text);font-weight:800;white-space:nowrap;">${mcVal.toFixed(0)} kcal</span>
+              ${mcRows.length ? `<div style="font-size:.68rem;color:var(--label);display:flex;flex-direction:column;gap:5px;min-width:0;">${mcRows.join('')}</div>` : ''}
+            </div>
+          </div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">${t('result.sessiondata.rl') || 'Relative Load'}</div>
+            <div style="font-size:.85rem;color:var(--text);font-weight:700;">
+              ${rlVal}% ${rlContext?.movementName ? `<span style="color:var(--label);font-weight:400;">${t('result.of.1rm')} ${rlContext.movementName}</span>` : ''}
             </div>
           </div>
         </div>`;
