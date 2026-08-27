@@ -383,7 +383,6 @@ var STRINGS = {
     'tpl.clear.filters':    '✕ Clear Filters',
     'section.recovery':     '⏱️ Recovery Status', // legacy
     'section.physics':      '⚡ Global Physics',
-    'section.match':        '🔍 Session Match',
     'section.cloud':        '☁️ Cloud Backup',
     'section.energy':       'Movement Pattern',
     'section.analysis':     '🎯 Analysis & Recommendations',
@@ -1187,7 +1186,8 @@ var STRINGS = {
     'workbench.table.duration': 'Duration',
     'workbench.table.workrep': 'Work/Rep',
     'workbench.table.mechshare': 'Mech Share',
-    'workbench.table.eraw': 'eRaw',
+    'workbench.table.eraw.title': 'eRaw Comparison',
+    'workbench.table.eraw.mech': 'Overall Efficiency',
     'workbench.table.delta': 'Δ vs Target',
     'workbench.table.fbgap': 'FB Gap',
     'workbench.table.dursim': 'Duration Sim.',
@@ -1403,8 +1403,11 @@ var STRINGS = {
     // History modal static
     'hist.modal.sig.static':'Session Signature',
     'hist.modal.phys.static':'Physics Results',
-    'hist.modal.eraw.title': 'Mechanical Work Efficiency',
+    'hist.modal.eraw.title': 'Overall Efficiency',
+    'result.workeff.title': 'Work Efficiency',
     'hist.modal.runeraw.title': 'Running Efficiency',
+    'hist.modal.dueraw.title': 'DU Efficiency',
+    'result.segmented.breakdown': 'Segmented Breakdown',
     'hist.modal.log.static':'Workout Log',
     'hist.modal.energy.static':'Movement Bias',
     // Modality labels
@@ -1819,7 +1822,6 @@ var STRINGS = {
     'tpl.clear.filters':    '✕ Limpiar Filtros',
     'section.recovery':     '⏱️ Estado de Recuperación', // legacy
     'section.physics':      '⚡ Física Global',
-    'section.match':        '🔍 Coincidencia de Sesión',
     'section.cloud':        '☁️ Respaldo en la Nube',
     'section.energy':       'Patrón de Movimiento',
     'section.analysis':     '🎯 Análisis y Recomendaciones',
@@ -2095,8 +2097,11 @@ var STRINGS = {
     // History modal static
     'hist.modal.sig.static':'Firma de Sesión',
     'hist.modal.phys.static':'Resultados de Física',
-    'hist.modal.eraw.title': 'Eficiencia de Trabajo Mecánico',
+    'hist.modal.eraw.title': 'Eficiencia General',
+    'result.workeff.title': 'Eficiencia de Trabajo',
     'hist.modal.runeraw.title': 'Eficiencia de Carrera',
+    'hist.modal.dueraw.title': 'Eficiencia DU',
+    'result.segmented.breakdown': 'Desglose Segmentado',
     'hist.modal.log.static':'Registro de Entrenamiento',
     'hist.modal.energy.static':'Sesgo de Movimiento',
     // Modality labels
@@ -2735,7 +2740,8 @@ var STRINGS = {
     'workbench.table.duration': 'Duración',
     'workbench.table.workrep': 'Trabajo/Rep',
     'workbench.table.mechshare': 'Prop. Mecánica',
-    'workbench.table.eraw': 'eRaw',
+    'workbench.table.eraw.title': 'Comparación eRaw',
+    'workbench.table.eraw.mech': 'Eficiencia General',
     'workbench.table.delta': 'Δ vs Objetivo',
     'workbench.table.fbgap': 'Dif. FB',
     'workbench.table.dursim': 'Sim. Duración',
