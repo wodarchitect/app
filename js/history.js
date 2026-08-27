@@ -1616,32 +1616,26 @@ function openHistoryModal(idx) {
         let eRawDisplay = null;
         try { eRawDisplay = (typeof getERawDisplay === 'function') ? getERawDisplay(w) : null; } catch (e) {}
 
-        // Running eRaw — second banner, only computed/shown when the
-        // main eRaw above landed on MIXED (a pure LOCO_RUN session's
-        // running is already its own primary eRaw, this would just
-        // duplicate it) and the entry has real run distance to credit.
-        // Shares cvResult.metMinutes (already computed above for the
-        // Cardio Intensity card) as its denominator — the exact same
-        // value the mechanical eRaw above uses — rather than isolating
-        // a running-only denominator, so the two banners are genuinely
-        // comparable on the same cost basis.
-        let runERawDisplay = null;
-        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && cvResult && typeof getRunningERawDisplay === 'function') {
-          try {
-            let runMetersForCard = 0;
-            (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(w) : []).forEach(inst => {
-              if (inst.cardioType === 'run') runMetersForCard += inst.totalM;
-            });
-            if (runMetersForCard > 0) {
-              runERawDisplay = getRunningERawDisplay(runMetersForCard, cvResult.metMinutes);
-            }
-          } catch (e) {}
+        // Segmented breakdown — Work/Running/DU Efficiency, each over
+        // only its own segment's MET-minutes (getSegmentedEfficiency),
+        // distinct from Overall Efficiency's whole-session denominator
+        // above (eRawDisplay). Computed regardless of Overall's
+        // modality, since a session can genuinely have a computable
+        // segmented breakdown even where Overall itself couldn't be —
+        // and vice versa (e.g. a whole-block RPE fallback with cardio
+        // movements: Overall still works from the total, but the
+        // mechanical-specific split can't be attributed, see
+        // getMechanicalSegmentMetMinutes's own reasoning).
+        let segmented = { workEff: null, runEff: null, duEff: null };
+        if (typeof getSegmentedEfficiency === 'function') {
+          try { segmented = getSegmentedEfficiency(w); } catch (e) {}
         }
+        const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null;
 
         return `${eRawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="unit" style="margin-bottom:0;">${t('hist.modal.eraw.title') || 'eRaw Efficiency'}</span>
-            <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Work / Strain</span>
+            <span class="unit" style="margin-bottom:0;">${t('hist.modal.eraw.title') || 'Overall Efficiency'}</span>
+            <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">${eRawDisplay.unitLabel === 'kJ / MET-min' ? 'Work / Strain' : eRawDisplay.unitLabel === 'm / MET-min' ? 'Distance / Strain' : 'Reps / Strain'}</span>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
             <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
@@ -1650,19 +1644,14 @@ function openHistoryModal(idx) {
             </div>
             <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${eRawDisplay.sentence}</div>
           </div>
-        </div>` : ''}
-        ${runERawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="unit" style="margin-bottom:0;">${t('hist.modal.runeraw.title') || 'Running Efficiency'}</span>
-            <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Distance / Strain</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
-            <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
-              <span style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">${runERawDisplay.value.toFixed(1)}</span>
-              <span class="metric-unit">${runERawDisplay.unitLabel}</span>
+          ${anySegmented ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">${t('result.segmented.breakdown') || 'Segmented Breakdown'}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              ${segmented.workEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('result.workeff.title') || 'Work'}: <strong style="color:var(--text);">${segmented.workEff.toFixed(2)} kJ / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.workMetMin)} MET-min)</span>${segmented.workIsEstimate ? ' (est.)' : ''}</div>` : ''}
+              ${segmented.runEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.runeraw.title') || 'Running'}: <strong style="color:var(--text);">${segmented.runEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.runMetMin)} MET-min)</span>${segmented.runIsEstimate ? ' (est.)' : ''}</div>` : ''}
+              ${segmented.duEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.dueraw.title') || 'DU'}: <strong style="color:var(--text);">${segmented.duEff.toFixed(1)} reps / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.duMetMin)} MET-min)</span>${segmented.duIsEstimate ? ' (est.)' : ''}</div>` : ''}
             </div>
-            <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${runERawDisplay.sentence}</div>
-          </div>
+          </div>` : ''}
         </div>` : ''}
         <div class="grid-2" style="gap:10px;">
           <div class="metric-card" style="${noAccent}">

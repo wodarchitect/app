@@ -288,9 +288,162 @@ function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
 // no measurable throughput and silently returned null — it now uses
 // reps instead, its own distinct bucket (LOCO_DU) keeping it from ever
 // being compared against LOCO_RUN's different units.
+// Mechanical-segment-specific MET-minutes — the harder half of the
+// segmented efficiency metrics (Work/Running/DU Efficiency). Mirrors
+// _computeBlockOverheadAndCV's live segment-level logic, but works
+// from entry.blockSegments (saved per-segment HR/RPE data) instead of
+// live DOM state.
+//
+// Two genuinely different cases per block, matching what
+// entry.blockSegments actually preserves:
+//  - Real segmentation (any real HR anywhere in the block): a
+//    type:'mechanical' segment exists on its own, with either real HR
+//    (source:'hr_segment') or no usable signal (source:'no_hr', which
+//    contributes nothing — same "don't guess" rule
+//    _computeBlockOverheadAndCV already applies). This case gives a
+//    genuine, block-specific mechanical MET-minutes contribution.
+//  - Whole-block RPE fallback (no real HR anywhere in the block): the
+//    saved data is ONE undifferentiated type:'block' segment covering
+//    the block's whole RPE-estimated effort — mechanical and cardio
+//    time were never separated when this was saved, so there's no way
+//    to split it back apart now. If the block has no cardio movements
+//    at all, its whole estimate safely belongs to mechanical (nothing
+//    else it could be). If it DOES have cardio movements but wasn't
+//    HR-tracked, this block's contribution is excluded from the
+//    segmented total entirely, rather than guessed — it still counts
+//    toward Overall Efficiency (via the existing, unchanged
+//    getEngineScoreERaw), just not toward the mechanical-specific
+//    breakdown.
+function getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFactor) {
+  if (!vo2max || !bw) return null;
+  const blockSegments = entry.blockSegments;
+  if (!Array.isArray(blockSegments) || !blockSegments.length) return null;
+
+  let metMinutes = 0;
+  let anyContribution = false;
+
+  blockSegments.forEach((segments, blockIndex) => {
+    if (!Array.isArray(segments) || !segments.length) return;
+
+    if (segments.length === 1 && segments[0].type === 'block') {
+      // Whole-block RPE fallback — only attributable if this block has
+      // no cardio movements to have possibly mixed in.
+      const block = (entry.blocks || [])[blockIndex];
+      const hasCardioMov = block && (block.movements || []).some(mv => MASTER_DB[mv.name]?.cardio);
+      if (hasCardioMov) return; // indeterminate split — excluded, not guessed
+      const seg = segments[0];
+      if (seg.source !== 'manual_rpe' || !seg.rpe || !seg.durationSec) return;
+      const relIntensity = Math.min(1.0, seg.rpe / 10);
+      const met = (relIntensity * vo2max) / 3.5;
+      metMinutes += met * (seg.durationSec / 60);
+      anyContribution = true;
+      return;
+    }
+
+    // Real segmentation — pull out just the mechanical segment(s).
+    segments.filter(s => s.type === 'mechanical').forEach(seg => {
+      let relIntensity = null;
+      if (seg.source === 'hr_segment') {
+        const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+        const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+        if (hrRestVal != null && hrMaxVal != null && hrMaxVal > hrRestVal) {
+          relIntensity = Math.max(0, Math.min(1, (seg.avgHR - hrRestVal) / (hrMaxVal - hrRestVal)));
+        }
+      }
+      if (relIntensity == null) return; // 'no_hr', or hr_segment without profile HR fields set — no usable signal
+      const met = (relIntensity * vo2max) / 3.5;
+      metMinutes += met * ((seg.durationSec || 0) / 60);
+      anyContribution = true;
+    });
+  });
+
+  return anyContribution ? metMinutes : null;
+}
+
+// Segmented efficiency trio for a saved entry — Work/Running/DU
+// Efficiency, each numerator over only its own segment's MET-minutes.
+// Distinct from getEngineScoreERaw (Overall Efficiency), which always
+// uses the whole session's MET-minutes regardless of modality mix.
+function getSegmentedEfficiency(entry) {
+  const bw = parseFloat(entry.bw) || 0;
+  if (!bw) return { workEff: null, runEff: null, duEff: null, workMetMin: null, runMetMin: null, duMetMin: null, runIsEstimate: false, duIsEstimate: false, workIsEstimate: false };
+  const age = parseInt(document.getElementById('global-age')?.value) || 30;
+  const gender = document.getElementById('global-gender')?.value || 'male';
+  const ageFactor = Math.max(0.60, 1 - Math.max(0, (age - 25) * 0.01));
+  const genderFactor = gender === 'female' ? 0.92 : 1.0;
+  const vo2max = parseFloat(entry.vo2max_used) || parseFloat(entry.vo2maxAttempted) || 0;
+
+  const hMetres = (parseFloat(document.getElementById('global-h')?.value) || 175) / 100;
+  const { workKJ } = reconstructMechanicalWork(entry, bw, hMetres);
+  let mechMetMinutes = getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFactor);
+  let workIsEstimate = false;
+
+  // Running/DU Efficiency now include PR-pace-estimated instances, not
+  // just real toggle-recorded ones — a session without a real toggle
+  // time shouldn't lose this metric entirely when every other cardio
+  // figure in the app (kcal, MET, %HRR) already falls back to a PR-pace
+  // estimate rather than going blank. runIsEstimate/duIsEstimate flag
+  // when ANY contributing instance was estimated, so the UI can label
+  // it accordingly rather than presenting an estimate as measured.
+  const { metMinutesByType, allRealByType } = getCardioTypeMetMinutes(entry, bw, gender);
+  let runM = 0, duReps = 0;
+  getSessionCardioInstances(entry).forEach(inst => {
+    if (inst.cardioType === 'run') runM += inst.totalM;
+    if (inst.cardioType === 'du') duReps += inst.totalM; // totalM is a rep count for DU, not meters
+  });
+  const runMetMinutes = metMinutesByType.run || 0;
+  const duMetMinutes = metMinutesByType.du || 0;
+  const runEff = (runM > 0 && runMetMinutes > 0) ? runM / runMetMinutes : null;
+  const duEff = (duReps > 0 && duMetMinutes > 0) ? duReps / duMetMinutes : null;
+  const runIsEstimate = runEff != null && allRealByType.run === false;
+  const duIsEstimate = duEff != null && allRealByType.du === false;
+
+  // Residual fallback — only when the direct segment-level calculation
+  // above genuinely couldn't attribute anything despite real mechanical
+  // work existing (workKJ > 0): a mixed block that never got real
+  // per-segment HR falls back to one undifferentiated whole-block RPE
+  // estimate, and getMechanicalSegmentMetMinutes correctly refuses to
+  // guess how much of that blended number was mechanical versus cardio
+  // (see its own "indeterminate split" comment). But the session's own
+  // total MET-minutes (getSessionCVEndurance, Overall Efficiency's
+  // denominator) already includes that block's contribution as part of
+  // its whole — so subtracting the cleanly-known running/DU MET-minutes
+  // from the session total gives a reasonable implied mechanical share,
+  // anchored to the athlete's own overall RPE-implied effort rather
+  // than an arbitrary time- or kcal-proportional guess. Always labeled
+  // an estimate, since it genuinely is one — it's the same starting
+  // number the excluded block's own RPE already blended together, just
+  // read from the other direction.
+  if ((mechMetMinutes == null || mechMetMinutes <= 0) && workKJ > 0) {
+    const cvResult = getSessionCVEndurance(entry);
+    if (cvResult && cvResult.metMinutes > 0) {
+      const residual = cvResult.metMinutes - runMetMinutes - duMetMinutes;
+      if (residual > 0) { mechMetMinutes = residual; workIsEstimate = true; }
+    }
+  }
+  const workEff = (workKJ > 0 && mechMetMinutes > 0) ? workKJ / mechMetMinutes : null;
+
+  // Raw MET-minute values, not just the derived efficiency ratios —
+  // shown alongside each ratio in the UI so the segmented split itself
+  // (how much of the session's total strain came from mechanical vs
+  // running vs DU specifically) is visible, not just its downstream
+  // effect on efficiency. null (not 0) whenever the matching
+  // efficiency figure is also null, so the UI's existing "only show a
+  // row when computable" check works for both without a separate one.
+  return {
+    workEff, runEff, duEff,
+    workMetMin: workEff != null ? mechMetMinutes : null,
+    runMetMin: runEff != null ? runMetMinutes : null,
+    duMetMin: duEff != null ? duMetMinutes : null,
+    runIsEstimate, duIsEstimate, workIsEstimate: workEff != null && workIsEstimate
+  };
+}
+
+
 function getEngineScoreERaw(entry) {
   const bw = parseFloat(entry.bw) || 0;
   const totalSec = parseFloat(entry.duration_sec) || 0;
+
   if (!bw || !totalSec) return null;
 
   const cvResult = getSessionCVEndurance(entry);
@@ -349,37 +502,6 @@ function getERawDisplay(entry) {
   }
   // LOCO_DU — not one of the two specified archetypes; same pattern, reps instead of meters.
   return { value: r.eRaw, unitLabel: 'reps / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} reps.` };
-}
-
-// Running eRaw — a SECOND, separate distance/MET-min figure for the
-// running portion specifically of a MIXED session (lifting + running
-// together). Exists because the main eRaw above only ever measures
-// mechanical work against the WHOLE session's cardio cost — real
-// running done alongside lifting shows up purely as a cost that
-// dilutes that number, with no credit anywhere for the running itself.
-//
-// Denominator is deliberately the SAME whole-session MET-minutes the
-// mechanical eRaw above already uses (sessionMetMinutes), not the
-// running segment's own MET-minutes in isolation — an earlier version
-// of this used a running-only denominator, which was inconsistent with
-// mechanical eRaw's denominator already including the running
-// segment's own contribution. Two numerators (mechanical work,
-// distance) sharing one denominator (total session strain) is what
-// makes the two banners genuinely comparable, rather than each
-// measuring cost on a different basis. This also removes the need for
-// a separate per-segment HR/VO2max MET estimate entirely — the shared
-// denominator is already the same validated metMinutes value the rest
-// of the app uses, not a new estimate with its own real-vs-fallback
-// uncertainty.
-function getRunningERawDisplay(runDistanceM, sessionMetMinutes) {
-  if (!runDistanceM || runDistanceM <= 0) return null;
-  if (!sessionMetMinutes || sessionMetMinutes <= 0) return null;
-  const value = runDistanceM / sessionMetMinutes;
-  return {
-    value,
-    unitLabel: 'm / MET-min',
-    sentence: `Running: every MET-min of this session's total strain yielded ${value.toFixed(1)} meters of distance.`
-  };
 }
 
 // Captures this session's eRaw (and the two absolute physics values it
@@ -679,50 +801,72 @@ function getHistoryCardioPaceMap(entry) {
 // ALL cardio types, not just Run/Row, from what it treats as
 // non-cardio "overhead" before distributing that overhead across
 // mechanical movement patterns).
+// Shared per-instance MET calculation — extracted so
+// getSessionCardioMetKcalByBlock (kcal) and getCardioTypeMetMinutes
+// (MET-minutes, for the segmented Running/DU Efficiency metrics) use
+// the exact same physics rather than two copies that could drift.
+// Returns null when the instance's own formula can't produce a usable
+// MET (e.g. a zero/negative row split), matching each branch's
+// existing bail-out behavior.
+function _cardioInstanceMet(inst, bw, gender) {
+  if (inst.secs <= 0 || inst.totalM <= 0) return null;
+  if (inst.cardioType === 'run') {
+    const speedMMin = inst.totalM / (inst.secs / 60);
+    return (0.2 * speedMMin + 3.5) / 3.5;
+  }
+  if (inst.cardioType === 'row') {
+    const splitSecPer500m = 500 / (inst.totalM / inst.secs);
+    if (splitSecPer500m <= 0) return null;
+    const watts = 2.80 / Math.pow(splitSecPer500m / 500, 3);
+    const vo2Lmin = gender === 'female' ? (0.6652 + 0.0128 * watts) : (1.1328 + 0.0113 * watts);
+    return (vo2Lmin * 1000 / bw) / 3.5;
+  }
+  if (inst.cardioType === 'ski') return 11; // MASTER_DB flat MET — not pace-sensitive yet, same limitation as its kcal figure
+  if (inst.cardioType === 'du') return 12; // MASTER_DB flat MET — not pace-sensitive yet, same limitation as its kcal figure
+  if (inst.cardioType === 'bike') {
+    // Reverses the standard kcal = MET × bw × hours × factor formula —
+    // see getSessionCardioMetKcalByBlock's own comment for why bike
+    // solves MET from a known kcal rather than the other way round.
+    return inst.totalM / (bw * (inst.secs / 3600));
+  }
+  return null;
+}
+
 function getSessionCardioMetKcalByBlock(entry, bw, ageFactor, genderFactor, gender) {
   const blockCardioKcal = {};
   let allReal = true;
   getSessionCardioInstances(entry).forEach(inst => {
-    if (inst.secs <= 0 || inst.totalM <= 0) return;
-    let met = null;
-    if (inst.cardioType === 'run') {
-      const speedMMin = inst.totalM / (inst.secs / 60);
-      met = (0.2 * speedMMin + 3.5) / 3.5;
-    } else if (inst.cardioType === 'row') {
-      const splitSecPer500m = 500 / (inst.totalM / inst.secs);
-      if (splitSecPer500m <= 0) return;
-      const watts = 2.80 / Math.pow(splitSecPer500m / 500, 3);
-      const vo2Lmin = gender === 'female' ? (0.6652 + 0.0128 * watts) : (1.1328 + 0.0113 * watts);
-      met = (vo2Lmin * 1000 / bw) / 3.5;
-    } else if (inst.cardioType === 'ski') {
-      met = 11; // MASTER_DB flat MET — not pace-sensitive yet, same limitation as its kcal figure
-    } else if (inst.cardioType === 'du') {
-      met = 12; // MASTER_DB flat MET — not pace-sensitive yet, same limitation as its kcal figure
-    } else if (inst.cardioType === 'bike') {
-      // Reverses the standard kcal = MET × bw × hours × factor formula.
-      // Bike's total kcal is already directly known (the logged calorie
-      // count from the machine's own display) rather than derived from
-      // an assumed MET the way Run/Row/Ski/DU's formulas work — so
-      // instead of estimating kcal from MET, MET is solved FROM the
-      // already-known kcal and the real recorded time. inst.totalM is
-      // the calorie count here (cardioRef=1), not meters. Simplifies to
-      // the textbook MET definition (kcal / (kg × hours)) since the
-      // age/gender factor applied to the known kcal and the one applied
-      // when converting back cancel exactly — verified this round-trips
-      // to the identical kcal value getCardioEnergy() already computes.
-      // Always real — getSessionCardioInstances never produces a bike
-      // instance without real toggle time, since there's no PR to
-      // estimate cal/min from.
-      met = inst.totalM / (bw * (inst.secs / 3600));
-    } else {
-      return;
-    }
+    const met = _cardioInstanceMet(inst, bw, gender);
+    if (met == null) return;
     const factor = inst.cardioType === 'row' ? ageFactor : ageFactor * genderFactor; // matches getSessionCardioKcalByBlock's existing convention — Row's VO2 regression already has its own gender coefficients
     const kcal = met * bw * (inst.secs / 3600) * factor;
     blockCardioKcal[inst.blockIndex] = (blockCardioKcal[inst.blockIndex] || 0) + kcal;
     if (!inst.isReal) allReal = false;
   });
   return { blockCardioKcal, allReal };
+}
+
+// MET-minutes per cardio type (run/row/ski/du/bike), session-wide, not
+// per block — powers the segmented Running/DU Efficiency metrics,
+// which need "how much cardio strain came specifically from running"
+// rather than the whole session's blended total. Includes both real
+// (toggle-recorded) and PR-pace-estimated instances now — a session
+// without a real toggle time shouldn't lose Running/DU Efficiency
+// entirely, it should show an estimate, same as every other metric in
+// this app that falls back to PR pace rather than going blank. Tracks
+// per-type whether every contributing instance was real, so the UI can
+// label a mixed or fully-estimated result accordingly.
+function getCardioTypeMetMinutes(entry, bw, gender) {
+  const metMinutesByType = {};
+  const allRealByType = {};
+  getSessionCardioInstances(entry).forEach(inst => {
+    const met = _cardioInstanceMet(inst, bw, gender);
+    if (met == null) return;
+    metMinutesByType[inst.cardioType] = (metMinutesByType[inst.cardioType] || 0) + met * (inst.secs / 60);
+    if (allRealByType[inst.cardioType] === undefined) allRealByType[inst.cardioType] = true;
+    if (!inst.isReal) allRealByType[inst.cardioType] = false;
+  });
+  return { metMinutesByType, allRealByType };
 }
 
 function getSessionCVEndurance(entry) {
@@ -732,6 +876,9 @@ function getSessionCVEndurance(entry) {
   const gender = document.getElementById('global-gender')?.value || 'male';
   const ageFactor = Math.max(0.60, 1 - Math.max(0, (age - 25) * 0.01));
   const genderFactor = gender === 'female' ? 0.92 : 1.0;
+  const vo2max = parseFloat(entry.vo2max_used) || 0;
+  const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+  const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
 
   const blockList = reconstructBlockMovementData(entry);
   if (!blockList.length) return null;
@@ -754,7 +901,35 @@ function getSessionCVEndurance(entry) {
       const blockCardio = blockCardioKcal[blockIndex] || 0;
       cvKcal += blockCardio;
       if (bw && blockMinutes > 0) metMinutes += (blockCardio / (bw * (blockMinutes / 60) * ageFactor)) * blockMinutes;
-    } else if (overheadAvailable) {
+      return;
+    }
+    // Prefer real per-segment data (entry.blockSegments) over the
+    // block-level RPE-only reconstruction below whenever it's actually
+    // available for this block — calling the exact same
+    // _computeBlockOverheadAndCV the live flow already uses, not a
+    // second implementation that could drift from it. This is what
+    // makes Overall Efficiency consistent with the segmented Work/
+    // Running/DU Efficiency metrics, which already use this same real
+    // per-segment data: before this, a block with real HR showing
+    // higher intensity than its own self-rated RPE would silently
+    // understate Overall's denominator relative to the segmented one,
+    // making a component look more "costly" than the whole it's part
+    // of — not possible once both read from the same source.
+    const segsForBlock = Array.isArray(entry.blockSegments) ? entry.blockSegments[blockIndex] : null;
+    if (Array.isArray(segsForBlock) && segsForBlock.length && vo2max > 0) {
+      const blockMechKcal = Object.values(blockData.patternKcal || {}).reduce((a, b) => a + b, 0);
+      const blockCardio = blockCardioKcal[blockIndex] || 0;
+      const result = _computeBlockOverheadAndCV(segsForBlock, blockMechKcal, blockCardio, bw, vo2max, ageFactor, genderFactor, hrRestVal, hrMaxVal);
+      cvKcal += result.cv;
+      if (bw && blockMinutes > 0) metMinutes += (result.cv / (bw * (blockMinutes / 60) * ageFactor * genderFactor)) * blockMinutes;
+      return;
+    }
+    // Fallback — no entry.blockSegments for this block (session saved
+    // before that feature existed, or this specific block never had
+    // any HR data at all): same block-level RPE-only reconstruction as
+    // before, unchanged behavior for sessions that simply don't have
+    // the finer-grained data to do better.
+    if (overheadAvailable) {
       const blockOverhead = blockOverheadList.totalMetEstimateList[blockIndex] || 0;
       cvKcal += blockOverhead;
       if (bw && blockMinutes > 0) metMinutes += (blockOverhead / (bw * (blockMinutes / 60) * ageFactor * genderFactor)) * blockMinutes;
@@ -764,14 +939,13 @@ function getSessionCVEndurance(entry) {
   // Rest periods — only present on sessions saved after tonight's rest-HR
   // feature (entry.restSegments), same two-era pattern as blockRpe. Older
   // sessions simply have nothing here, same as today — not a regression.
-  const hrRestVal2 = parseFloat(document.getElementById('global-hrrest')?.value) || null;
-  const hrMaxVal2 = parseFloat(document.getElementById('global-hrmax')?.value) || null;
-  const vo2maxUsed2 = parseFloat(entry.vo2max_used) || null;
-  if (Array.isArray(entry.restSegments) && hrRestVal2 != null && hrMaxVal2 != null && hrMaxVal2 > hrRestVal2 && vo2maxUsed2) {
+  // Reuses hrRestVal/hrMaxVal/vo2max from the top of this function rather
+  // than re-reading the same profile fields a second time.
+  if (Array.isArray(entry.restSegments) && hrRestVal != null && hrMaxVal != null && hrMaxVal > hrRestVal && vo2max) {
     entry.restSegments.forEach(seg => {
       if (seg.source !== 'hr_segment') return;
-      const relIntensity = Math.max(0, Math.min(1, (seg.avgHR - hrRestVal2) / (hrMaxVal2 - hrRestVal2)));
-      const met = (relIntensity * vo2maxUsed2) / 3.5;
+      const relIntensity = Math.max(0, Math.min(1, (seg.avgHR - hrRestVal) / (hrMaxVal - hrRestVal)));
+      const met = (relIntensity * vo2max) / 3.5;
       const timeHours = seg.durationSec / 3600;
       cvKcal += met * bw * timeHours * ageFactor * genderFactor;
       totalTimeSec += seg.durationSec;

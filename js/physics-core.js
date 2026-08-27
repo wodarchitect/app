@@ -1437,7 +1437,6 @@ function calculateGlobalPhysics() {
   }
 
   document.getElementById('results').classList.remove('hidden-el');
-  document.getElementById('session-match-outer').classList.remove('hidden-el');
   document.getElementById('cloud-backup-section').classList.remove('hidden-el');
   document.getElementById('auditTrail').innerHTML = ah;
 
@@ -1846,9 +1845,8 @@ function calculateGlobalPhysics() {
   // use for saved entries — that path exists for reconstructing a session
   // from storage after the fact, and re-running it here risks drifting
   // from what this exact calculation just produced. Only run/DU distance
-  // needs the lightweight preview-entry technique below (same one
-  // renderSessionMatchSection uses just after this), since that number
-  // isn't otherwise available as a single live variable.
+  // needs the lightweight preview-entry technique below, since that
+  // number isn't otherwise available as a single live variable.
   {
     const eRawCard = document.getElementById('resERaw-card');
     const eRawVal = document.getElementById('resERaw');
@@ -1896,77 +1894,76 @@ function calculateGlobalPhysics() {
         eRawVal.innerText = eRawDisplay.value.toFixed(2);
         eRawUnit.innerText = eRawDisplay.unitLabel;
         eRawSentence.innerText = eRawDisplay.sentence;
+        // Badge reflects whichever unit Overall Efficiency actually
+        // landed on this session — a fixed "Work / Strain" label would
+        // be wrong for a pure-running or pure-DU session.
+        const badgeEl = document.getElementById('resERawBadge');
+        if (badgeEl) {
+          badgeEl.textContent = eRawDisplay.unitLabel === 'kJ / MET-min' ? 'Work / Strain'
+            : eRawDisplay.unitLabel === 'm / MET-min' ? 'Distance / Strain'
+            : 'Reps / Strain';
+        }
         eRawCard.style.display = '';
       } else {
         eRawCard.style.display = 'none';
       }
     }
 
-    // Running eRaw — second, separate banner. Only meaningful (and
-    // only shown) for a MIXED session that also has real running in
-    // it — a pure LOCO_RUN session already gets this exact number as
-    // its own primary eRaw above, and a session with no real running
-    // has nothing to credit here at all.
-    const runERawCard = document.getElementById('resRunERaw-card');
-    const runERawVal = document.getElementById('resRunERaw');
-    const runERawUnit = document.getElementById('resRunERawUnit');
-    const runERawSentence = document.getElementById('resRunERawSentence');
-    let runERawDisplay = null;
-    if (typeof getRunningERawDisplay === 'function') {
+    // Segmented breakdown — Work/Running/DU Efficiency, each over only
+    // its own segment's MET-minutes rather than the whole session's
+    // (that's what makes them distinct from Overall Efficiency above).
+    // Reuses getSegmentedEfficiency() directly — the same reconstruction
+    // function History/Workbench call on a saved entry — against a live
+    // preview entry built the same way the rest of this function already
+    // builds one, rather than a second, parallel live-only
+    // implementation that could drift from the saved-entry version.
+    let segmented = { workEff: null, runEff: null, duEff: null };
+    if (typeof getSegmentedEfficiency === 'function') {
       try {
-        let runMetersForCard = 0;
-        const previewEntryForRunERaw = { blocks: serializeBlocksForTemplate(), cardioIntervalSummary: (typeof _buildCardioIntervalSummary === 'function' ? _buildCardioIntervalSummary() : null) };
-        (typeof getSessionCardioInstances === 'function' ? getSessionCardioInstances(previewEntryForRunERaw) : []).forEach(inst => {
-          if (inst.cardioType === 'run') runMetersForCard += inst.totalM;
-        });
-        // Only relevant when the main banner above landed on MIXED —
-        // a LOCO_RUN session's running is already the primary eRaw,
-        // showing it again here would be pure duplication. Shares
-        // liveMetMinutes as its denominator — the exact same value the
-        // mechanical eRaw above just used — rather than isolating a
-        // running-only denominator, so the two banners are genuinely
-        // comparable on the same cost basis.
-        if (eRawDisplay && eRawDisplay.unitLabel === 'kJ / MET-min' && runMetersForCard > 0) {
-          runERawDisplay = getRunningERawDisplay(runMetersForCard, liveMetMinutes);
-        }
+        const previewEntryForSegmented = {
+          bw: window._lastBodyweight,
+          duration_sec: window._lastDurationSec,
+          vo2max_used: window._lastVo2max,
+          blocks: serializeBlocksForTemplate(),
+          blockSegments: (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null
+        };
+        segmented = getSegmentedEfficiency(previewEntryForSegmented);
       } catch (e) {}
     }
-    if (runERawCard) {
-      if (runERawDisplay) {
-        runERawVal.innerText = runERawDisplay.value.toFixed(1);
-        runERawUnit.innerText = runERawDisplay.unitLabel;
-        runERawSentence.innerText = runERawDisplay.sentence;
-        runERawCard.style.display = '';
-      } else {
-        runERawCard.style.display = 'none';
+    const breakdownWrap = document.getElementById('resSegmentedBreakdown-wrap');
+    const workRow = document.getElementById('resWorkEff-row');
+    const runRow = document.getElementById('resRunEff-row');
+    const duRow = document.getElementById('resDuEff-row');
+    const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null;
+    if (breakdownWrap) breakdownWrap.style.display = anySegmented ? '' : 'none';
+    if (workRow) {
+      workRow.style.display = segmented.workEff != null ? '' : 'none';
+      if (segmented.workEff != null) {
+        document.getElementById('resWorkEff').textContent = segmented.workEff.toFixed(2);
+        document.getElementById('resWorkMetMin').textContent = Math.round(segmented.workMetMin);
+        const workEstNote = document.getElementById('resWorkEff-estnote');
+        if (workEstNote) workEstNote.style.display = segmented.workIsEstimate ? '' : 'none';
+      }
+    }
+    if (runRow) {
+      runRow.style.display = segmented.runEff != null ? '' : 'none';
+      if (segmented.runEff != null) {
+        document.getElementById('resRunEff').textContent = segmented.runEff.toFixed(1);
+        document.getElementById('resRunMetMin').textContent = Math.round(segmented.runMetMin);
+        const runEstNote = document.getElementById('resRunEff-estnote');
+        if (runEstNote) runEstNote.style.display = segmented.runIsEstimate ? '' : 'none';
+      }
+    }
+    if (duRow) {
+      duRow.style.display = segmented.duEff != null ? '' : 'none';
+      if (segmented.duEff != null) {
+        document.getElementById('resDuEff').textContent = segmented.duEff.toFixed(1);
+        document.getElementById('resDuMetMin').textContent = Math.round(segmented.duMetMin);
+        const duEstNote = document.getElementById('resDuEff-estnote');
+        if (duEstNote) duEstNote.style.display = segmented.duIsEstimate ? '' : 'none';
       }
     }
   }
-
-  // Find and render comparable prior sessions using the just-computed data.
-  // Uses "now" as the date so every history entry correctly counts as prior
-  // to this not-yet-saved session.
-  renderSessionMatchSection({
-    fb: parseFloat(document.getElementById('resFB')?.innerText),
-    wd: parseFloat(document.getElementById('resWD')?.dataset.precise || document.getElementById('resWD')?.innerText),
-    duration_sec: window._lastDurationSec,
-    bw: window._lastBodyweight,
-    mc_mech: mechKcal, mc_aero: cardioKcal, mc_overhead: overheadKcal,
-    patternProfile: _lastPatternProfile,
-    rl: window._lastSessionRadar?.rl,
-    mc: window._lastSessionRadar?.mc,
-    td: window._lastSessionRadar?.td,
-    bw_work_pct: window._lastBodyweightWorkPct,
-    rpe: window._lastComputedRPE || null,
-    date: new Date().toISOString(),
-    // Required for getSessionWorkPerRep() — without this, the live,
-    // just-calculated session could never compute its own work/rep and
-    // Session Match would always report "no matches" for it, regardless
-    // of history. serializeBlocksForTemplate() already includes result
-    // (reads it directly from the live res-m/res-s/res-r/res-x fields),
-    // so no separate step is needed to attach it.
-    blocks: serializeBlocksForTemplate()
-  });
 
   // If in an active box session, offer to submit to leaderboard
   if (window._activeBoxSession && window._activeBoxSession.id) {
