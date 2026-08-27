@@ -224,113 +224,6 @@ function findAllSessionMatches(targetEntry, history) {
   return { matches: passing, reason: passing.length ? null : 'no_comparable_session' };
 }
 
-// Directional ratio for display (candidate/target*100). Returns null when
-// target is 0 — the ratio is undefined there, so that axis is excluded from
-// the chart rather than plotted as a misleading number (same handling
-// validated for PP triplet's near-zero-denominator axes).
-function _matchDisplayRatio(t, c) {
-  if (t === 0) return null;
-  return c / t * 100;
-}
-
-const SESSION_MATCH_COLORS = ['#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#4a3aa7', '#e34948', '#008300'];
-let _sessionMatchCharts = {};
-
-function _destroySessionMatchCharts() {
-  Object.values(_sessionMatchCharts).forEach(c => c && c.destroy());
-  _sessionMatchCharts = {};
-}
-
-function _buildMatchChart(canvasId, labels, targetVals, candidateSeries, maxVal) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const plottableIdx = labels.map((_, i) => targetVals[i] !== null);
-  const plotLabels = labels.filter((_, i) => plottableIdx[i]);
-  const plotTarget = targetVals.filter((_, i) => plottableIdx[i]);
-  const useBar = plotLabels.length <= 2;
-
-  const targetDs = { label: 'Target', data: plotTarget, borderColor: '#2a78d6', backgroundColor: useBar ? '#2a78d6' : 'rgba(42,120,214,0.06)', borderWidth: 2, borderDash: useBar ? [] : [4,3], pointRadius: 0, borderRadius: useBar ? 3 : 0 };
-  const candDs = candidateSeries.map(s => {
-    const vals = s.vals.filter((_, i) => plottableIdx[i]).map(v => v === null ? 0 : v);
-    return useBar
-      ? { label: s.name, data: s.on ? vals : vals.map(() => 0), backgroundColor: s.color, borderRadius: 3 }
-      : { label: s.name, data: s.on ? vals : vals.map(() => null), borderColor: s.color, backgroundColor: s.color + '20', borderWidth: 2, pointRadius: 3, hidden: !s.on };
-  });
-
-  return new Chart(canvas, {
-    type: useBar ? 'bar' : 'radar',
-    data: { labels: plotLabels, datasets: [targetDs, ...candDs] },
-    options: useBar ? {
-      responsive: true, maintainAspectRatio: false,
-      scales: { x: { grid: { display: false }, ticks: { font: { size: 11 } } }, y: { title: { display: true, text: '% of target' }, grid: { color: 'rgba(137,135,129,0.15)' } } },
-      plugins: { legend: { display: false } }
-    } : {
-      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
-      scales: { r: { min: 0, max: maxVal, ticks: { display: false }, angleLines: { color: 'rgba(137,135,129,0.25)' }, grid: { color: 'rgba(137,135,129,0.25)' }, pointLabels: { font: { size: 11 } } } },
-      plugins: { legend: { display: false } }
-    }
-  });
-}
-
-// Builds the collapsible threshold-settings panel shown above Session
-// Match's results — shown in both the "no matches" and normal display
-// paths, since loosening a threshold is exactly what someone would want
-// to do when no match was found. Changing any value immediately re-runs
-// the match (cheap to recompute) rather than requiring a separate
-// "apply" step.
-function _buildMatchSettingsHtml(targetEntry) {
-  const s = getSessionMatchSettings();
-  const entryId = targetEntry._matchSettingsId || (targetEntry._matchSettingsId = 'ms' + Math.random().toString(36).slice(2));
-  window._matchSettingsTargets = window._matchSettingsTargets || {};
-  window._matchSettingsTargets[entryId] = targetEntry;
-  // Preserves open/closed state across re-renders — without this, every
-  // threshold adjustment rebuilds the whole section from scratch and the
-  // panel would re-collapse each time, forcing a re-expand to adjust a
-  // second value.
-  const isOpen = !!window._matchSettingsOpen;
-  // Ranges chosen for reasonable drum length: FB gap rarely needs to
-  // exceed ~30 points in practice; the two similarity settings are
-  // naturally 1-100%.
-  const fbGapValues = Array.from({length: 30}, (_, i) => i + 1);
-  const pctValues = Array.from({length: 100}, (_, i) => i + 1);
-  return `
-    <div class="accordion-section" style="margin-bottom:10px;">
-      <div class="accordion-header match-settings-toggle" data-entry-id="${entryId}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:8px 10px;font-size:.72rem;font-weight:700;color:var(--label);">
-        <span>⚙️ ${t('match.settings.title')}</span>
-        <span class="match-settings-chevron" style="transition:transform .15s;${isOpen ? 'transform:rotate(180deg);' : ''}">▾</span>
-      </div>
-      <div class="match-settings-body" data-entry-id="${entryId}" style="display:${isOpen ? '' : 'none'};padding:6px 10px 10px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <label style="font-size:.68rem;color:var(--label);display:block;margin-bottom:3px;">${t('match.settings.fb')}</label>
-            ${makePicker('match-setting-input', s.fbMaxGap, fbGapValues, 'FB gap (points)', `data-key="fbMaxGap" data-entry-id="${entryId}"`)}
-          </div>
-          <div>
-            <label style="font-size:.68rem;color:var(--label);display:block;margin-bottom:3px;">${t('match.settings.duration')}</label>
-            ${makePicker('match-setting-input', s.durationMin, pctValues, 'session length similarity %', `data-key="durationMin" data-entry-id="${entryId}"`)}
-          </div>
-          <div>
-            <label style="font-size:.68rem;color:var(--label);display:block;margin-bottom:3px;">${t('match.settings.workperrep')}</label>
-            ${makePicker('match-setting-input', s.workPerRepMin, pctValues, 'work per rep similarity %', `data-key="workPerRepMin" data-entry-id="${entryId}"`)}
-          </div>
-          <div>
-            <label style="font-size:.68rem;color:var(--label);display:block;margin-bottom:3px;">${t('match.settings.mechshare')}</label>
-            ${makePicker('match-setting-input', s.mechShareMin, pctValues, 'mechanical share similarity %', `data-key="mechShareMin" data-entry-id="${entryId}"`)}
-          </div>
-        </div>
-        </div>
-        <div style="font-size:.65rem;color:var(--label);margin-top:6px;line-height:1.5;">${t('match.settings.desc')}</div>
-      </div>
-    </div>`;
-}
-
-// Global Threshold Controls for the Session Coverage Workbench — adapted
-// from _buildMatchSettingsHtml above (same 4 gates, same picker UI,
-// same getSessionMatchSettings/saveSessionMatchSettings storage), but
-// always-visible rather than collapsible (this IS the Workbench's
-// primary control, not a secondary settings panel), and not tied to
-// any specific target session — adjusting a threshold here refreshes
-// the whole Coverage Cloud's node styling globally.
 function _buildWorkbenchControlsHtml() {
   const s = getSessionMatchSettings();
   const fbGapValues = Array.from({length: 30}, (_, i) => i + 1);
@@ -358,7 +251,7 @@ function _buildWorkbenchControlsHtml() {
 }
 
 // Wires the Workbench's threshold pickers — same openPickerWithCallback
-// pattern as _wireMatchSettings, but saves settings and re-renders the
+// pattern used throughout the app, but saves settings and re-renders the
 // Coverage Cloud (global) instead of one session's match section.
 function _wireWorkbenchControls() {
   const container = document.getElementById('workbench-controls');
@@ -581,14 +474,19 @@ function renderErawTimelineChart(targetEntry) {
 // selectionScore) — nothing recalculated, so this table can never drift
 // from what actually decided a session counted as a match.
 //
-// Table 2 ("Additional Physical Context" — how efficient was the
-// physical output?): eRaw, its delta vs the target, and the absolute
-// physical numbers (mechanical work, cardio strain, average MET,
-// locomotion distance) that eRaw itself is built from. Deliberately
-// separate from Table 1 — gate similarity and physical efficiency are
-// two different questions, and conflating them in one wide table was
-// the original problem this split fixes. Collapsed by default via
-// <details> since it's supplementary context, not the primary read.
+// Table 2 ("eRaw Comparison" — how efficient was the mechanical
+// output?): eRaw and its delta vs the target. The Workbench was built
+// specifically to compare mechanical eRaw — Running/DU eRaw and their
+// own match gates were tried here and then deliberately reverted; that
+// data still lives in the Running/DU Efficiency banners on the live
+// and History views, just not duplicated into this comparison.
+//
+// Table 3 ("Additional Physical Context" — the raw physical numbers
+// eRaw itself is built from): mechanical work, cardio strain, average
+// MET, relative load, bodyweight-work share, locomotion distance. No
+// eRaw or delta here anymore — that's Table 2's job now, not
+// duplicated. Collapsed by default via <details> since it's
+// supplementary context, not the primary read.
 function renderWorkbenchMatchTable(targetEntry) {
   const container = document.getElementById('workbench-match-table');
   if (!container) return;
@@ -638,11 +536,21 @@ function renderWorkbenchMatchTable(targetEntry) {
     </tr>`;
   };
 
-  const buildContextRow = (row, showRunCol) => {
+  const buildERawRow = (row) => {
     const { entry, isTarget } = row;
     const r = getEngineScoreERaw(entry);
     const eRaw = r ? r.eRaw : null;
     const delta = (!isTarget && eRaw != null && targetEraw) ? ((eRaw - targetEraw) / targetEraw * 100) : null;
+    return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
+      <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
+      <td style="padding:6px 8px;white-space:nowrap;">${(entry.date || '').slice(0, 10)}</td>
+      <td style="padding:6px 8px;text-align:right;">${eRaw != null ? eRaw.toFixed(3) : '—'}</td>
+      <td style="padding:6px 8px;text-align:right;${delta != null ? (delta >= 0 ? 'color:#22C55E;' : 'color:#EF4444;') : ''}">${isTarget ? '—' : (delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—')}</td>
+    </tr>`;
+  };
+
+  const buildContextRow = (row, showRunCol) => {
+    const { entry, isTarget } = row;
     const cv = getSessionCVEndurance(entry);
     const wdVal = parseFloat(entry.wd);
     // Relative Load — entry.rl is already this session's avg %1RM
@@ -667,8 +575,6 @@ function renderWorkbenchMatchTable(targetEntry) {
     return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
       <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
       <td style="padding:6px 8px;white-space:nowrap;">${(entry.date || '').slice(0, 10)}</td>
-      <td style="padding:6px 8px;text-align:right;">${eRaw != null ? eRaw.toFixed(3) : '—'}</td>
-      <td style="padding:6px 8px;text-align:right;${delta != null ? (delta >= 0 ? 'color:#22C55E;' : 'color:#EF4444;') : ''}">${isTarget ? '—' : (delta != null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—')}</td>
       <td style="padding:6px 8px;text-align:right;">${!isNaN(wdVal) ? wdVal.toFixed(1) : '—'}</td>
       <td style="padding:6px 8px;text-align:right;">${cv ? Math.round(cv.metMinutes) : '—'}</td>
       <td style="padding:6px 8px;text-align:right;">${cv ? cv.met.toFixed(1) : '—'}</td>
@@ -679,6 +585,7 @@ function renderWorkbenchMatchTable(targetEntry) {
   };
 
   const gateRowsHtml = allRows.map(buildGateRow).join('');
+  const eRawRowsHtml = allRows.map(buildERawRow).join('');
   // Run Distance only earns a column at all if at least one row in this
   // matched cluster (target included) actually has real Run toggle
   // data — otherwise every cell in it would read '—', which isn't
@@ -708,6 +615,22 @@ function renderWorkbenchMatchTable(targetEntry) {
       </table>
     </div>
     <div style="margin-top:16px;">
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.table.eraw.title') || 'eRaw Comparison'}</div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:.72rem;color:var(--text);">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
+              <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
+              <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw.mech') || 'Overall Efficiency'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
+            </tr>
+          </thead>
+          <tbody>${eRawRowsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:16px;">
       <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.table.context.title') || 'Additional Physical Context'}</div>
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;font-size:.72rem;color:var(--text);">
@@ -715,8 +638,6 @@ function renderWorkbenchMatchTable(targetEntry) {
             <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
-              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw') || 'eRaw'}</th>
-              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.mechwork') || 'Mech. Work (kJ)'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.cardiostrain') || 'Cardio Strain (MET-min)'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.avgmet') || 'Avg MET'}</th>
@@ -734,304 +655,6 @@ function renderWorkbenchMatchTable(targetEntry) {
 
 // Wires up the settings panel's toggle and pickers — called once after the
 // panel HTML is inserted into the DOM.
-function _wireMatchSettings(section) {
-  section.querySelectorAll('.match-settings-toggle').forEach(header => {
-    header.onclick = () => {
-      const entryId = header.dataset.entryId;
-      const body = section.querySelector(`.match-settings-body[data-entry-id="${entryId}"]`);
-      const chevron = header.querySelector('.match-settings-chevron');
-      const isOpen = body.style.display !== 'none';
-      body.style.display = isOpen ? 'none' : '';
-      chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
-      window._matchSettingsOpen = !isOpen;
-    };
-  });
-  // makePicker() bakes in onclick="openPicker(this)" by default — this
-  // JS-set .onclick overrides that HTML attribute (same property, later
-  // assignment wins), routing to openPickerWithCallback() instead. That's
-  // needed because the standard picker flow just sets the hidden input's
-  // .value directly with no change/input event fired, which wouldn't
-  // trigger anything downstream — a callback lets this save + re-render
-  // immediately without depending on an event that never fires.
-  section.querySelectorAll('.picker-trigger').forEach(trigger => {
-    const inp = trigger.querySelector('.match-setting-input');
-    if (!inp) return;
-    trigger.onclick = () => {
-      if (trigger.dataset.disabled === '1') return;
-      openPickerWithCallback(trigger, (val) => {
-        inp.value = val;
-        trigger.querySelector('.picker-trigger-val').textContent = formatPickerVal(val, trigger.dataset.label);
-        const entryId = inp.dataset.entryId;
-        const key = inp.dataset.key;
-        saveSessionMatchSettings({ [key]: val });
-        const targetEntry = window._matchSettingsTargets?.[entryId];
-        if (targetEntry) renderSessionMatchSection(targetEntry);
-      });
-    };
-  });
-}
-
-function renderSessionMatchSection(targetEntry) {
-  const section = document.getElementById('session-match-section');
-  if (!section) return;
-  _destroySessionMatchCharts();
-
-  const { matches, reason } = findAllSessionMatches(targetEntry, getHistory());
-
-  if (!matches.length) {
-    section.style.display = '';
-    section.innerHTML = `
-      ${_buildMatchSettingsHtml(targetEntry)}
-      <div style="background:var(--glass-bg);border:0.5px solid var(--glass-border);border-radius:var(--radius);padding:16px;text-align:center;">
-        <div style="font-size:.82rem;font-weight:800;color:var(--text);margin-bottom:6px;">${t('match.none.title')}</div>
-        <div style="font-size:.75rem;color:var(--label);line-height:1.6;">${t('match.none.desc')}</div>
-      </div>`;
-    _wireMatchSettings(section);
-    return;
-  }
-
-  section.style.display = '';
-  const PERF_LABELS_ARR = ['Average Power'];
-
-  const targetWpr = getSessionWorkPerRep(targetEntry) || 0;
-  const targetMechShare = getSessionMechShare(targetEntry) || 0;
-  const tPower = getSessionPower(targetEntry) || { mech: 0, aero: 0, overhead: 0, total: 0 };
-
-  const sessions = matches.map((m, i) => {
-    const c = m.session;
-    const cWpr = getSessionWorkPerRep(c) || 0;
-    const cMechShare = getSessionMechShare(c) || 0;
-    const cPower = getSessionPower(c) || { mech: 0, aero: 0, overhead: 0, total: 0 };
-    return {
-      name: c.label || 'Session', color: SESSION_MATCH_COLORS[i % SESSION_MATCH_COLORS.length], on: true,
-      selection: m.selectionScore, workPerRepPct: m.wprSim, mechSharePct: m.mechShareSim,
-      // Raw gate values for the Comparable Sessions table — shows what's
-      // actually being compared (FB, Duration, work/rep, mech share)
-      // alongside the Target row, rather than only a combined percentage.
-      fb: parseFloat(c.fb) || 0,
-      durationSec: parseFloat(c.duration_sec) || 0,
-      workPerRep: cWpr,
-      workPerRepRaw: [cWpr],
-      mechShare: cMechShare,
-      // Average Power is now a single axis (mech only) — Aerobic was
-      // removed as a sibling "Power" metric entirely, not just
-      // deduplicated with Total. mech is genuine Force x Distance / Time
-      // physics power; aero is a metabolic-cost RATE (kcal/time converted
-      // to W/kg units) — a fundamentally different kind of quantity that
-      // only ever shared units with mech by coincidence of the conversion,
-      // never by measuring the same thing. It's still a real, useful
-      // number — just never framed as "Power" anywhere in the app now.
-      perfVals: [_matchDisplayRatio(tPower.mech,cPower.mech)],
-      perfPct: axisMatchScore(tPower.mech,cPower.mech),
-      mechPowerDelta: tPower.mech > 0 ? ((cPower.mech - tPower.mech) / tPower.mech * 100) : null,
-      powerRaw: [cPower.mech, cPower.aero, cPower.overhead],
-      overheadPower: cPower.overhead,
-      rl: c.rl != null ? parseFloat(c.rl) : null, mc: c.mc, td: c.td,
-      bwWorkPct: c.bw_work_pct != null ? parseFloat(c.bw_work_pct) : null,
-      // VO2max-retest signal: internal diagnostic, not a "Power" display —
-      // built on the genuine mathematical relationship in
-      // overheadKcal = totalMetEstimate - mc_mech - mc_aero (see the
-      // overhead calculation this mirrors): given a fixed RPE/VO2max/
-      // time-derived total, Overhead's share is forced to shrink by
-      // exactly the amount mc_mech+mc_aero grows. That relationship only
-      // holds for the actual terms in that equation — mc_mech and
-      // mc_aero, both raw kcal totals for the whole session — not for
-      // tPower.mech, which is wd-derived and doesn't appear in the
-      // overhead equation at all. Using tPower.mech here (an earlier
-      // version of this code) broke the very relationship the signal
-      // depends on, mixing a pure-physics rate with a metabolic-cost
-      // total under one label.
-      vo2maxRetestSignal: (() => {
-        const tRpe = parseFloat(targetEntry.rpe);
-        const cRpe = parseFloat(c.rpe);
-        if (!tRpe || !cRpe || tRpe > cRpe) return false; // target must be same-or-lower RPE than the candidate
-        const tMechAero = (parseFloat(targetEntry.mc_mech) || 0) + (parseFloat(targetEntry.mc_aero) || 0);
-        const cMechAero = (parseFloat(c.mc_mech) || 0) + (parseFloat(c.mc_aero) || 0);
-        if (!cMechAero) return false;
-        return (tMechAero - cMechAero) / cMechAero >= 0.25;
-      })()
-    };
-  });
-
-  const targetPerfVals = [tPower.mech].map(v => v > 0 ? 100 : null);
-
-  const _fmtMinSec = (sec) => {
-    const s = Math.round(sec || 0);
-    return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
-  };
-
-  const comparableTable = () => {
-    const targetRow = `<tr style="border-bottom:1px solid var(--glass-border);">
-      <td style="padding:5px 4px;"></td>
-      <td style="padding:5px 4px;font-weight:800;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:#2a78d6;display:inline-block;margin-right:5px;"></span>${t('match.target')}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetEntry.fb != null ? Math.round(parseFloat(targetEntry.fb)) : '—'}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${_fmtMinSec(targetEntry.duration_sec)}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetWpr.toFixed(2)}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetMechShare.toFixed(0)}%</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">—</td></tr>`;
-    const rows = sessions.map((s, i) => `<tr style="border-bottom:1px solid var(--glass-border);opacity:${s.on?1:0.35};">
-      <td style="padding:5px 4px;">
-        <label style="display:flex;align-items:center;cursor:pointer;">
-          <input type="checkbox" checked data-idx="${i}" class="match-toggle" style="position:absolute;opacity:0;width:0;height:0;">
-          <span class="match-toggle-box" style="width:16px;height:16px;border-radius:4px;border:1.5px solid ${s.color};background:${s.color};display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s;">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><polyline points="4,13 9,18 20,6" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </span>
-        </label>
-      </td>
-      <td style="padding:5px 4px;color:var(--text);">${s.name}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--label);">${Math.round(s.fb)}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--label);">${_fmtMinSec(s.durationSec)}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.workPerRep.toFixed(2)}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.mechShare.toFixed(0)}%</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--label);font-weight:700;">${s.selection.toFixed(0)}%</td></tr>`).join('');
-    return `<table style="width:100%;border-collapse:collapse;font-size:.7rem;"><thead><tr style="border-bottom:1px solid var(--glass-border);">
-      <th></th>
-      <th style="text-align:left;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.session')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.fb')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.duration')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.workperrep')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.mechshare')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.matchpct')}</th>
-      </tr></thead><tbody>${targetRow}${rows}</tbody></table>`;
-  };
-
-  const perfLegendHtml = () => sessions.map(s => {
-    const d = s.mechPowerDelta;
-    const deltaLabel = d == null ? '—' : `${d>=0?'+':''}${d.toFixed(0)}% ${t('match.mech.power')}`;
-    const deltaColor = d == null ? 'var(--text)' : (d>=0 ? '#e34948' : '#3266ad');
-    return `
-    <div style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--label);margin-bottom:3px;">
-      <span style="width:10px;height:10px;border-radius:2px;background:${s.color};display:inline-block;flex-shrink:0;"></span>
-      <span style="flex:1;">${s.name}</span>
-      <span style="font-weight:700;color:${deltaColor};">${deltaLabel}</span>
-    </div>`;
-  }).join('');
-
-  const detailTable = (headers, rawKey, targetRaw) => {
-    let rows = `<tr style="border-bottom:1px solid var(--glass-border);"><td style="padding:5px 4px;font-weight:800;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:#2a78d6;display:inline-block;margin-right:5px;"></span>${t('match.target')}</td>
-      ${targetRaw.map(v => `<td style="text-align:right;padding:5px 4px;color:var(--text);">${v.toFixed(1)}%</td>`).join('')}</tr>`;
-    sessions.forEach(s => {
-      rows += `<tr style="border-bottom:1px solid var(--glass-border);opacity:${s.on?1:0.35};">
-        <td style="padding:5px 4px;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:${s.color};display:inline-block;margin-right:5px;"></span>${s.name}</td>
-        ${s[rawKey].map(v => `<td style="text-align:right;padding:5px 4px;color:var(--label);">${v.toFixed(1)}%</td>`).join('')}</tr>`;
-    });
-    return `<table style="width:100%;border-collapse:collapse;font-size:.7rem;"><thead><tr style="border-bottom:1px solid var(--glass-border);">
-      <th style="text-align:left;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.session')}</th>
-      ${headers.map(h => `<th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${h}</th>`).join('')}
-      </tr></thead><tbody>${rows}</tbody></table>`;
-  };
-
-  const powerTable = () => {
-    const targetPowerRow = [tPower.mech];
-    let rows = `<tr style="border-bottom:1px solid var(--glass-border);"><td style="padding:5px 4px;font-weight:800;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:#2a78d6;display:inline-block;margin-right:5px;"></span>${t('match.target')}</td>
-      ${targetPowerRow.map(v=>`<td style="text-align:right;padding:5px 4px;color:var(--text);">${v.toFixed(2)} W/kg</td>`).join('')}</tr>`;
-    sessions.forEach(s => {
-      const rowVals = [s.powerRaw[0]]; // mech only — aero/overhead (indices 1,2) intentionally excluded, no longer framed as Power
-      rows += `<tr style="border-bottom:1px solid var(--glass-border);opacity:${s.on?1:0.35};">
-        <td style="padding:5px 4px;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:${s.color};display:inline-block;margin-right:5px;"></span>${s.name}</td>
-        ${rowVals.map((v,i) => {
-          const tv = targetPowerRow[i];
-          const delta = tv > 0 ? ((v-tv)/tv*100) : null;
-          const deltaStr = delta != null ? `<br><span style="font-size:.62rem;color:${delta>=0?'#e34948':'#3266ad'};">${delta>=0?'+':''}${delta.toFixed(0)}%</span>` : '';
-          return `<td style="text-align:right;padding:5px 4px;color:var(--label);">${v.toFixed(2)} W/kg${deltaStr}</td>`;
-        }).join('')}</tr>`;
-    });
-    return `<table style="width:100%;border-collapse:collapse;font-size:.7rem;"><thead><tr style="border-bottom:1px solid var(--glass-border);">
-      <th style="text-align:left;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.session')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.mech')}</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-  };
-
-  const vo2SuggestCard = () => {
-    if (!sessions.some(s => s.on && s.vo2maxRetestSignal)) return '';
-    return `<div style="${cardStyle}border-color:#eda100;">
-      <div style="display:flex;align-items:flex-start;gap:8px;">
-        <span style="font-size:1rem;line-height:1;">💡</span>
-        <div>
-          <div style="font-size:.72rem;font-weight:800;color:#eda100;margin-bottom:3px;">${t('match.vo2suggest.title')}</div>
-          <div style="font-size:.7rem;color:var(--label);line-height:1.4;">${t('match.vo2suggest.body')}</div>
-        </div>
-      </div>
-    </div>`;
-  };
-
-  const contextTable = () => {
-    let rows = `<tr style="border-bottom:1px solid var(--glass-border);"><td style="padding:5px 4px;font-weight:800;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:#2a78d6;display:inline-block;margin-right:5px;"></span>${t('match.target')}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetEntry.rl != null ? parseFloat(targetEntry.rl)+'%' : '—'}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetEntry.mc||'—'}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetEntry.td != null ? parseFloat(targetEntry.td).toFixed(1) : '—'}</td>
-      <td style="text-align:right;padding:5px 4px;color:var(--text);">${targetEntry.bw_work_pct != null ? parseFloat(targetEntry.bw_work_pct)+'%' : '—'}</td></tr>`;
-    sessions.forEach(s => {
-      rows += `<tr style="border-bottom:1px solid var(--glass-border);opacity:${s.on?1:0.35};">
-        <td style="padding:5px 4px;color:var(--text);"><span style="width:8px;height:8px;border-radius:2px;background:${s.color};display:inline-block;margin-right:5px;"></span>${s.name}</td>
-        <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.rl != null ? s.rl+'%' : '—'}</td>
-        <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.mc||'—'}</td>
-        <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.td != null ? parseFloat(s.td).toFixed(1) : '—'}</td>
-        <td style="text-align:right;padding:5px 4px;color:var(--label);">${s.bwWorkPct != null ? s.bwWorkPct+'%' : '—'}</td></tr>`;
-    });
-    return `<table style="width:100%;border-collapse:collapse;font-size:.7rem;"><thead><tr style="border-bottom:1px solid var(--glass-border);">
-      <th style="text-align:left;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.session')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.rl')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.mc')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.td')}</th>
-      <th style="text-align:right;padding:5px 4px;color:var(--label);font-weight:400;">${t('match.bwworkpct')}</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
-  };
-
-  const cardStyle = 'background:var(--glass-bg);border:0.5px solid var(--glass-border);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:var(--radius);padding:14px;margin-bottom:12px;';
-  section.innerHTML = `
-    ${_buildMatchSettingsHtml(targetEntry)}
-    <div style="${cardStyle}">
-      <div style="font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:var(--label);margin-bottom:10px;">${t('match.comparable')}</div>
-      <div id="match-toggles">${comparableTable()}</div>
-    </div>
-    <div style="${cardStyle}">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <span style="font-size:.72rem;font-weight:800;color:var(--text);">${t('match.performance')}</span>
-        <button class="match-flip-btn" data-card="perf" style="font-size:.68rem;background:transparent;border:1px solid var(--glass-border);border-radius:6px;padding:3px 8px;color:var(--label);cursor:pointer;">${t('match.detail')}</button>
-      </div>
-      <div id="perfFront"><div style="position:relative;width:100%;height:280px;"><canvas id="matchRadarPerf"></canvas></div><div id="perfLegend" style="margin-top:8px;">${perfLegendHtml()}</div></div>
-      <div id="perfBack" style="display:none;">${powerTable()}</div>
-    </div>
-    <div id="vo2SuggestWrap">${vo2SuggestCard()}</div>
-    <div style="${cardStyle}">
-      <div style="font-size:.72rem;font-weight:800;color:var(--text);margin-bottom:10px;">${t('match.context')}</div>
-      <div id="contextTableWrap">${contextTable()}</div>
-    </div>`;
-
-  function draw() {
-    _destroySessionMatchCharts();
-    _sessionMatchCharts.perf = _buildMatchChart('matchRadarPerf', PERF_LABELS_ARR, targetPerfVals, sessions.map(s => ({ name: s.name, color: s.color, on: s.on, vals: s.perfVals })), 230);
-  }
-  draw();
-  _wireMatchSettings(section);
-
-  section.querySelectorAll('.match-toggle').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      sessions[+e.target.dataset.idx].on = e.target.checked;
-      const box = e.target.nextElementSibling;
-      if (box) box.style.opacity = e.target.checked ? '1' : '0.25';
-      const row = e.target.closest('tr');
-      if (row) row.style.opacity = e.target.checked ? '1' : '0.35';
-      draw();
-      section.querySelector('#perfLegend').innerHTML = perfLegendHtml();
-      section.querySelector('#perfBack').innerHTML = powerTable();
-      section.querySelector('#vo2SuggestWrap').innerHTML = vo2SuggestCard();
-      section.querySelector('#contextTableWrap').innerHTML = contextTable();
-    });
-  });
-  section.querySelectorAll('.match-flip-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const card = btn.dataset.card;
-      const front = section.querySelector('#' + card + 'Front');
-      const back = section.querySelector('#' + card + 'Back');
-      const showingFront = front.style.display !== 'none';
-      front.style.display = showingFront ? 'none' : '';
-      back.style.display = showingFront ? '' : 'none';
-      btn.textContent = showingFront ? t('match.back') : t('match.detail');
-    });
-  });
-}
 
 // Heat-scale color for CV Intensity (MET) — blue (low) -> yellow ->
 // red (high), using colors already established elsewhere in this app's
