@@ -1092,6 +1092,23 @@ function renderFbDurationChart(canvasId, filters) {
   chartInstances[instKey] = new Chart(canvas, cfg);
   if (isFullscreen) {
     window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
+    // Default selection — most recent session, highlighted immediately
+    // on open rather than only after a tap. Same precedent the
+    // Intensity vs Force Bias chart already established, and the same
+    // approach just applied to the Engine Frontier (Power Scatter)
+    // chart: the insight card should show which dot it's describing
+    // from the moment the chart opens, not leave it to be discovered
+    // by tapping around.
+    if (points.length) {
+      const latestPoint = points.reduce((a, b) => new Date(a.date) > new Date(b.date) ? a : b);
+      window._fbdSelectedPoint = latestPoint;
+      _updateFbDurationInsightCard(latestPoint);
+      // Chart.js's initial render already happened synchronously inside
+      // new Chart() above, before _fbdSelectedPoint was set — without
+      // an explicit update() here, the ring wouldn't actually appear
+      // until the next unrelated redraw.
+      chartInstances[instKey].update();
+    }
     _fbDurationWireTrackpadPan(canvas, instKey);
     _fbDurationWireTouchGestures(canvas, instKey);
   }

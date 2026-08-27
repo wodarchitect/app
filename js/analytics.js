@@ -565,6 +565,22 @@ function renderPowerScatterChart(canvasId) {
   if (isFullscreen) {
     window._psCurrentPoints = points;
     window._psCurrentFrontier = frontierPoints;
+    // Default selection — most recent session, highlighted immediately
+    // on open rather than only after a tap. Same precedent the
+    // Intensity vs Force Bias chart already established: the insight
+    // card auto-populates for the latest session by default, so the
+    // chart should visually indicate which dot that card is describing
+    // from the moment it opens, not leave the athlete to find it.
+    if (points.length) {
+      const latestPoint = points.reduce((a, b) => new Date(a.date) > new Date(b.date) ? a : b);
+      window._psSelectedPoint = latestPoint;
+      _updatePowerScatterInsightCard(latestPoint, points, frontierPoints);
+      // Chart.js's initial render already happened synchronously inside
+      // new Chart() above, before _psSelectedPoint was set — without an
+      // explicit update() here, the ring wouldn't actually appear until
+      // the next unrelated redraw.
+      chartInstances[instKey].update();
+    }
     // Stashed after creation (not before — need the auto-computed
     // initial min/max, since neither axis has a hardcoded max) so
     // _powerScatterResetZoom() can restore exactly this without relying
