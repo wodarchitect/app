@@ -36,6 +36,8 @@ function _buildInsightPayload(hist) {
   const now = Date.now();
   const sixWeeksAgo = now - 42 * 86400000;
   const recent = hist.filter(w => new Date(w.date).getTime() >= sixWeeksAgo);
+  const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+  const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
 
   // Weekly breakdown — 6 weeks oldest first
   const weeklyBreakdown = [];
@@ -46,17 +48,78 @@ function _buildInsightPayload(hist) {
       const t = new Date(w.date).getTime();
       return t >= wStart && t < wEnd;
     });
+    // Overall Efficiency average for the week — only across sessions
+    // where it's actually computable (getEngineScoreERaw returns null
+    // for plenty of sessions; averaging over 0s would understate a
+    // week that had real efficiency data on some sessions and none on
+    // others, same reasoning as avgRl already excluding zero-RL rows).
+    const wEff = wSess.map(w => { try { return getEngineScoreERaw(w)?.eRaw; } catch(e) { return null; } }).filter(v => v != null && v > 0);
     weeklyBreakdown.push({
       week: 6 - i,
       sessions: wSess.length,
       avgPd:  wSess.length ? +(wSess.reduce((s,w) => s + (parseFloat(w.pd)||0), 0) / wSess.length).toFixed(2) : 0,
       avgFb:  wSess.length ? +(wSess.reduce((s,w) => s + (parseFloat(w.fb)||0), 0) / wSess.length).toFixed(0) : 0,
       avgRl:  (() => { const rlS = wSess.filter(w => parseFloat(w.rl) > 0); return rlS.length ? +(rlS.reduce((s,w) => s + (parseFloat(w.rl)||0), 0) / rlS.length).toFixed(0) : 0; })(),
+      avgEfficiency: wEff.length ? +(wEff.reduce((s,v) => s+v, 0) / wEff.length).toFixed(3) : null,
       totalMc:      +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc)||0),0)).toFixed(0),
       totalMcMech:  +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc_mech)||0),0)).toFixed(0),
       totalMcAero:  +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc_aero)||0),0)).toFixed(0),
     });
   }
+
+  // Per-session table — the actual FB/PD/RL spread the weekly averages
+  // above were smoothing over. Directly caused this addition: verifying
+  // an earlier insight against this same payload found the model
+  // inventing a Force Bias upper bound (96) that didn't exist anywhere
+  // in the weekly-average data it was given — the real spread was only
+  // visible at the session level, which the prompt never included. 19
+  // sessions over 6 weeks is small enough that sending all of them is
+  // cheap, and removes the model's need to guess at a spread it can't
+  // actually see.
+  const sessionTable = recent.map(w => {
+    let eff = null;
+    try { eff = getEngineScoreERaw(w)?.eRaw ?? null; } catch(e) {}
+    return {
+      date: (w.date || '').slice(0, 10),
+      fb: parseFloat(w.fb) || 0,
+      pd: parseFloat(w.pd) || 0,
+      rl: parseFloat(w.rl) || 0,
+      efficiency: eff != null ? +eff.toFixed(3) : null
+    };
+  });
+
+  // RPE-vs-real-HR accuracy — only sessions with BOTH a real session-wide
+  // avgHR AND a logged RPE qualify; per the athlete, that's 3 of 19
+  // sessions here. Deliberately kept as a small, explicitly-labeled
+  // sample rather than silently averaged into a bigger claim — the goal
+  // is surfacing a real, directionally-consistent pattern found earlier
+  // (real %HRR running higher than RPE×10 across sessions checked by
+  // hand) as a data point worth watching, not asserting it as an
+  // established fact from 3 sessions. sampleSize is included explicitly
+  // so the prompt can instruct the model to hedge appropriately.
+  const rpeAccuracySessions = [];
+  if (hrRestVal != null && hrMaxVal != null && hrMaxVal > hrRestVal) {
+    recent.forEach(w => {
+      const avgHR = parseFloat(w.avgHR);
+      const rpe = parseFloat(w.rpe);
+      if (!avgHR || !rpe) return;
+      const realPctHRR = Math.max(0, Math.min(100, ((avgHR - hrRestVal) / (hrMaxVal - hrRestVal)) * 100));
+      const rpeImpliedPct = rpe * 10;
+      rpeAccuracySessions.push({
+        date: (w.date || '').slice(0, 10),
+        realPctHRR: Math.round(realPctHRR),
+        rpeImpliedPct: Math.round(rpeImpliedPct),
+        deltaPts: Math.round(realPctHRR - rpeImpliedPct)
+      });
+    });
+  }
+  const rpeAccuracy = {
+    sampleSize: rpeAccuracySessions.length,
+    sessions: rpeAccuracySessions,
+    avgDeltaPts: rpeAccuracySessions.length
+      ? Math.round(rpeAccuracySessions.reduce((s,v) => s+v.deltaPts, 0) / rpeAccuracySessions.length)
+      : null
+  };
 
   const avgFb = recent.length ? recent.reduce((s,w)=>s+(parseFloat(w.fb)||0),0)/recent.length : 0;
   const dominantModality = avgFb > 100 ? 'strength' : avgFb > 60 ? 'mixed' : 'conditioning';
@@ -140,6 +203,7 @@ function _buildInsightPayload(hist) {
       sessionsPerWeek: +(recent.length / 6).toFixed(1),
       totalSessions:   recent.length,
       weeklyBreakdown,
+      sessionTable,
       dominantModality,
       consistency
     },
@@ -156,7 +220,8 @@ function _buildInsightPayload(hist) {
         peakWeekLoad:  Math.round(peakStructuralWeek),
         variabilityPct: structuralVariability
       },
-      neural: { patternDistribution, sessionsWithPattern, sessionsWithoutPattern, sessionsCardioOnly }
+      neural: { patternDistribution, sessionsWithPattern, sessionsWithoutPattern, sessionsCardioOnly },
+      rpeAccuracy
     },
     trends: { ctlChange6w: ctlChange }
   };
@@ -219,14 +284,19 @@ METRIC DEFINITIONS — interpret these correctly:
 - W/kg (pd): mechanical power output relative to bodyweight. Comparable only within similar session types — a 0.6 W/kg deadlift session and 0.6 W/kg metcon are very different. Higher is not always better.
 - Force Bias (fb): tonnage ÷ mechanical work. High (>120) = strength-dominant session, low (<60) = conditioning-dominant. Neither is inherently better — it describes session character, not quality.
 - Relative Loading (rl): the heaviest barbell effort in the session relative to 1RM — a peak, not an average across the session. Measures barbell intensity, NOT cardiovascular effort. High RL = heavy relative to max strength.
+- Efficiency (eRaw): mechanical work (or distance/reps for a pure-cardio session) divided by the session's total cardiovascular strain (MET-minutes) — how much output per unit of physiological cost. Trending up over the 6 weeks means the athlete is producing more for the same strain; trending down or flat is worth naming as a specific coaching point, not just described in passing. Only present for sessions where a MET-minutes estimate exists — a week with no efficiency value is missing data, not a zero.
 - Dominant modality: 'strength' = barbell-heavy sessions dominate, 'mixed' = combination of barbell and conditioning, 'conditioning' = cardio/metcon dominant. Mixed is not unfocused — it reflects CrossFit's broad stimulus.
 - CTL: aerobic cardiovascular chronic load (42-day average). Measures cardiovascular training base only. NOT overall training quality or strength. Do not recommend CTL targets for strength or power goals.
 - ATL: aerobic cardiovascular acute load (7-day average). Spikes after hard conditioning sessions.
 - Form (ATL÷CTL): ratio of recent to chronic aerobic load. >1.0 means recent aerobic load exceeds chronic baseline (fatigued aerobically). <1.0 means below baseline (fresh or detraining). 1.0 is neutral. Higher Form is NOT better for strength athletes.
 - Recovery data is 6-week trend data, NOT current state. The recovery section of your analysis should describe how the athlete has managed fatigue and recovery across the full period — were they consistently overreaching, detraining, or well-balanced? Structural variability shows how erratic their mechanical loading was week to week.
 - Pattern distribution: how many sessions in 6 weeks included each movement pattern. Imbalances (e.g. squat every week, no pull work) are coaching opportunities.
+- Per-session table (sessionTable): the actual session-by-session FB/PD/RL/efficiency values behind the weekly averages above. Use this for any claim about a range, spread, or specific session — e.g. "sessions ranged from X to Y" must be read directly off this table, never estimated or extrapolated from the weekly averages. If you state a minimum, maximum, or specific value, it must appear literally in this table.
+- RPE accuracy (rpeAccuracy): compares the athlete's self-rated RPE against real heart-rate-derived intensity, ONLY for sessions where both exist. sampleSize tells you how many sessions that is — if it's small (roughly under 5), treat any pattern here as a single observation worth watching, not an established finding, and say so explicitly rather than stating it as fact. If sampleSize is 0, do not mention RPE accuracy at all.
 
 Even when training is going well, always find 3 specific actionable ways to improve, optimize or progress further. A good coach never just praises — they identify the next challenge, the weak link, or the next level to pursue. Recommendations should be forward-looking and concrete, not generic.
+
+CRITICAL — do not state a specific number (a range, a minimum, a maximum, a single session's value) unless it appears literally in the data provided. If you want to describe a spread or pattern across multiple data points, either read the actual values from sessionTable or describe it qualitatively (e.g. "varied considerably") rather than inventing a specific number.
 
 Return this exact JSON structure, no markdown, no backticks, no other text:
 {"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":["specific forward-looking recommendation 1","specific forward-looking recommendation 2","specific forward-looking recommendation 3"]}`;
@@ -241,12 +311,15 @@ Training (last 6 weeks):
 - Dominant modality: ${payload.training.dominantModality}
 - Consistency: ${payload.training.consistency}% of weeks had sessions
 - Weekly breakdown (week 1=oldest):
-${payload.training.weeklyBreakdown.map(w => `  Week ${w.week}: ${w.sessions} sessions, avg ${w.avgPd} W/kg, avg FB ${w.avgFb}, avg RL ${w.avgRl}%`).join('\n')}
+${payload.training.weeklyBreakdown.map(w => `  Week ${w.week}: ${w.sessions} sessions, avg ${w.avgPd} W/kg, avg FB ${w.avgFb}, avg RL ${w.avgRl}%, avg Efficiency ${w.avgEfficiency ?? 'n/a'}`).join('\n')}
+- Per-session table (date, FB, W/kg, RL%, Efficiency) — the ONLY source for any claim about a specific session, range, minimum, or maximum:
+${payload.training.sessionTable.map(s => `  ${s.date}: FB ${s.fb}, ${s.pd} W/kg, RL ${s.rl}%, Efficiency ${s.efficiency ?? 'n/a'}`).join('\n')}
 
 Recovery patterns (6-week view — not current state):
 - Aerobic trend: ${payload.recovery.aerobic.ctlTrend}, CTL change: ${payload.recovery.aerobic.ctlChange6w > 0 ? '+' : ''}${payload.recovery.aerobic.ctlChange6w}%, avg Form over period: ${payload.recovery.aerobic.avgForm}, days overreaching (Form>1.4): ${payload.recovery.aerobic.overreachingDays}, days detraining (Form<0.8): ${payload.recovery.aerobic.detrainingDays}
 - Structural load pattern: avg weekly mc_mech load ${payload.recovery.structural.avgWeeklyLoad}, peak week ${payload.recovery.structural.peakWeekLoad}, variability ${payload.recovery.structural.variabilityPct}% above average
 - Movement pattern balance: ${payload.recovery.neural.patternDistribution.length ? payload.recovery.neural.patternDistribution.map(p => `${p.pattern}: ${p.sessions} sessions (${p.pct}%)`).join(', ') : 'no barbell pattern data'} — cardio-only sessions: ${payload.recovery.neural.sessionsCardioOnly}, unclassified: ${payload.recovery.neural.sessionsWithoutPattern}
+${payload.recovery.rpeAccuracy.sampleSize > 0 ? `- RPE accuracy — SMALL SAMPLE (${payload.recovery.rpeAccuracy.sampleSize} of ${payload.training.totalSessions} sessions had both real HR and a logged RPE): ${payload.recovery.rpeAccuracy.sessions.map(s => `${s.date}: real ${s.realPctHRR}% HRR vs RPE-implied ${s.rpeImpliedPct}%, delta ${s.deltaPts > 0 ? '+' : ''}${s.deltaPts} pts`).join('; ')}. Average delta: ${payload.recovery.rpeAccuracy.avgDeltaPts > 0 ? '+' : ''}${payload.recovery.rpeAccuracy.avgDeltaPts} pts. This sample is too small to state as a firm conclusion — mention it only as a single observation worth watching if you reference it at all.` : ''}
 
 Trends:
 - CTL change over 6 weeks: ${payload.trends.ctlChange6w > 0 ? '+' : ''}${payload.trends.ctlChange6w}% (0% means stable, positive means building, negative means declining — do not comment on absolute CTL values)`;
