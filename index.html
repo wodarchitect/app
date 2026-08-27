@@ -1198,8 +1198,8 @@
           <div id="results" class="hidden-el">
             <div class="metric-card" id="resERaw-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
               <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span class="unit" data-i18n="hist.modal.eraw.title" style="margin-bottom:0;">"unit">eRaw Efficiency</span>
-                <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Work / Strain</span>
+                <span class="unit" data-i18n="hist.modal.eraw.title" style="margin-bottom:0;">"unit">Overall Efficiency</span>
+                <span id="resERawBadge" style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Work / Strain</span>
               </div>
               <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
                 <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
@@ -1208,18 +1208,19 @@
                 </div>
                 <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;" id="resERawSentence"></div>
               </div>
-            </div>
-            <div class="metric-card" id="resRunERaw-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
-              <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span class="unit" data-i18n="hist.modal.runeraw.title" style="margin-bottom:0;">"unit">Running eRaw</span>
-                <span style="font-size:.6rem;font-weight:800;color:var(--label);background:rgba(255,255,255,.06);border:1px solid var(--glass-border);border-radius:20px;padding:3px 10px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;">Distance / Strain</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:8px;flex-wrap:wrap;">
-                <div style="display:flex;align-items:baseline;gap:6px;min-width:0;">
-                  <span id="resRunERaw" style="font-size:2.5rem;font-weight:900;color:var(--text);line-height:1;letter-spacing:-.02em;">0</span>
-                  <span class="metric-unit" id="resRunERawUnit"></span>
+              <div id="resSegmentedBreakdown-wrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+                <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;" data-i18n="result.segmented.breakdown">Segmented Breakdown</div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <div id="resWorkEff-row" style="display:none;font-size:.78rem;color:var(--label);">
+                    <span data-i18n="result.workeff.title">Work</span>: <strong style="color:var(--text);"><span id="resWorkEff"></span> kJ / MET-min</strong> <span style="color:var(--label);">(<span id="resWorkMetMin"></span> MET-min)</span><span id="resWorkEff-estnote" style="display:none;"> (est.)</span>
+                  </div>
+                  <div id="resRunEff-row" style="display:none;font-size:.78rem;color:var(--label);">
+                    <span data-i18n="hist.modal.runeraw.title">Running</span>: <strong style="color:var(--text);"><span id="resRunEff"></span> m / MET-min</strong> <span style="color:var(--label);">(<span id="resRunMetMin"></span> MET-min)</span><span id="resRunEff-estnote" style="display:none;"> (est.)</span>
+                  </div>
+                  <div id="resDuEff-row" style="display:none;font-size:.78rem;color:var(--label);">
+                    <span data-i18n="hist.modal.dueraw.title">DU</span>: <strong style="color:var(--text);"><span id="resDuEff"></span> reps / MET-min</strong> <span style="color:var(--label);">(<span id="resDuMetMin"></span> MET-min)</span><span id="resDuEff-estnote" style="display:none;"> (est.)</span>
+                  </div>
                 </div>
-                <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;" id="resRunERawSentence"></div>
               </div>
             </div>
             <div class="grid-2" style="gap:10px;margin-bottom:12px;">
@@ -1437,12 +1438,6 @@
             </div>
 
             </div>
-
-          <div id="session-match-outer" class="hidden-el">
-          <div class="section-label" style="margin-top:16px;" data-i18n="section.match">🔍 Session Match</div>
-          <!-- Closest Comparable Session(s) -->
-            <div id="session-match-section" style="display:none;margin-bottom:12px;"></div>
-          </div>
 
             <!-- Cloud actions — save/load/sync -->
             <div id="cloud-backup-section" class="hidden-el">
