@@ -398,6 +398,27 @@ function renderPowerScatterChart(canvasId) {
   const lc = isDark ? '#9CA3AF' : '#6B7280';
   const brand = '#FF6B35';
 
+  // Every session from the most recent calendar day — not selection
+  // state, always on, compact card included, same as the halo the
+  // Intensity vs Force Bias chart already shows unconditionally. Points
+  // keep their own frontier-tier fill/border color here (unlike that
+  // chart's simple two-color scheme) — the tier color is a genuinely
+  // meaningful signal on this specific chart, and a flat orange
+  // override would destroy it; the halo layers on top instead of
+  // replacing it.
+  // localDateStr (local-timezone Date methods), not p.date's own UTC
+  // slice — a session logged late at night in a timezone behind UTC can
+  // have a UTC-equivalent date that's already rolled to the next day,
+  // splitting what's actually the same local training day across two
+  // different UTC dates. Matches the same localDateStr approach the
+  // Intensity vs Force Bias chart already uses correctly for this exact
+  // grouping.
+  const latestDay = points.length ? points.reduce((max, p) => {
+    const d = localDateStr(new Date(p.entry.date));
+    return d > max ? d : max;
+  }, localDateStr(new Date(points[0].entry.date))) : null;
+  const latestDayPoints = latestDay ? points.filter(p => localDateStr(new Date(p.entry.date)) === latestDay) : [];
+
   if (!points.length) {
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
     return;
@@ -438,24 +459,28 @@ function renderPowerScatterChart(canvasId) {
   const selectedGlowPlugin = {
     id: 'powerScatterSelectedGlow',
     beforeDatasetsDraw(chart) {
-      if (!isFullscreen || !window._psSelectedPoint) return;
+      if (!isFullscreen || !window._psSelectedPoints || !window._psSelectedPoints.length) return;
       const meta = chart.getDatasetMeta(0);
       if (!meta || !meta.data) return;
-      const idx = points.indexOf(window._psSelectedPoint);
-      if (idx < 0 || !meta.data[idx]) return;
-      const el = meta.data[idx];
       const ctx = chart.ctx;
-      // Same crisp, fixed-radius ring used on the Force Bias vs Duration
-      // chart — a blurred glow has no hard edge and can visually bleed
-      // onto nearby unselected points in dense clusters (confirmed real
-      // issue there earlier tonight); a stroked ring can't.
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(el.x, el.y, 13, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,107,53,0.85)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
+      window._psSelectedPoints.forEach(sel => {
+        const idx = points.indexOf(sel);
+        if (idx < 0 || !meta.data[idx]) return;
+        const el = meta.data[idx];
+        // Same crisp, fixed-radius ring used on the Force Bias vs Duration
+        // chart — a blurred glow has no hard edge and can visually bleed
+        // onto nearby unselected points in dense clusters (confirmed real
+        // issue there earlier tonight); a stroked ring can't. Drawn once
+        // per selected point — the default selection is every session
+        // from the most recent training day, which can be more than one.
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(el.x, el.y, 13, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,107,53,0.85)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      });
     }
   };
 
@@ -467,7 +492,7 @@ function renderPowerScatterChart(canvasId) {
         data: points,
         backgroundColor: ctx => {
           const p = ctx.raw;
-          if (isFullscreen && p && window._psSelectedPoint === p) return '#FFFFFF';
+          if (isFullscreen && p && window._psSelectedPoints && window._psSelectedPoints.includes(p)) return '#FFFFFF';
           if (!p) return _fbdHexWithOpacity('#6B8CAE', 0.8);
           const pct = _psFrontierPct(p, frontierPoints);
           return _fbdHexWithOpacity(_psTierColor(pct), p.allReal ? 0.8 : 0.5);
@@ -481,15 +506,15 @@ function renderPowerScatterChart(canvasId) {
         // an estimate.
         borderColor: ctx => {
           const p = ctx.raw;
-          if (isFullscreen && p && window._psSelectedPoint === p) return '#FF6B35';
+          if (isFullscreen && p && window._psSelectedPoints && window._psSelectedPoints.includes(p)) return '#FF6B35';
           if (!p) return _fbdHexWithOpacity('#6B8CAE', 0.6);
           const pct = _psFrontierPct(p, frontierPoints);
           return _fbdHexWithOpacity(_psTierColor(pct), p.allReal ? 1 : 0.5);
         },
-        borderWidth: ctx => (isFullscreen && ctx.raw && window._psSelectedPoint === ctx.raw) ? 3 : 1.5,
+        borderWidth: ctx => (isFullscreen && ctx.raw && window._psSelectedPoints && window._psSelectedPoints.includes(ctx.raw)) ? 3 : 1.5,
         pointRadius: ctx => {
           const p = ctx.raw;
-          if (isFullscreen && p && window._psSelectedPoint === p) return 9;
+          if (isFullscreen && p && window._psSelectedPoints && window._psSelectedPoints.includes(p)) return 9;
           return p && p.allReal ? 5 : 4;
         },
         pointHoverRadius: 7
@@ -553,32 +578,66 @@ function renderPowerScatterChart(canvasId) {
         // frontierPoints shares object references with points.
         const point = cfg.data.datasets[el.datasetIndex].data[el.index];
         if (!point || typeof point.x !== 'number') return;
-        window._psSelectedPoint = point;
+        // A manual tap always selects just that one point — the
+        // multi-select default (every session from the most recent
+        // training day) only applies before the athlete has picked
+        // anything specific.
+        window._psSelectedPoints = [point];
         _updatePowerScatterInsightCard(point, points, frontierPoints);
         chartInstances[instKey]?.update();
       } : undefined
     },
-    plugins: [selectedGlowPlugin]
+    plugins: [selectedGlowPlugin, {
+      id: 'powerScatterLatestDayHalo',
+      afterDatasetsDraw(chart) {
+        if (!latestDayPoints.length) return;
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        latestDayPoints.forEach(p => {
+          const idx = points.indexOf(p);
+          if (idx < 0 || !meta.data[idx]) return;
+          const el = meta.data[idx];
+          ctx.beginPath();
+          ctx.arc(el.x, el.y, 16, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,107,53,0.4)';
+          ctx.lineWidth = 6;
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+    }]
   };
 
   chartInstances[instKey] = new Chart(canvas, cfg);
   if (isFullscreen) {
     window._psCurrentPoints = points;
     window._psCurrentFrontier = frontierPoints;
-    // Default selection — most recent session, highlighted immediately
-    // on open rather than only after a tap. Same precedent the
-    // Intensity vs Force Bias chart already established: the insight
-    // card auto-populates for the latest session by default, so the
-    // chart should visually indicate which dot that card is describing
-    // from the moment it opens, not leave the athlete to find it.
+    // Default selection — every session from the most recent TRAINING
+    // DAY, not just a single most-recent session: a training day can
+    // have more than one session (e.g. a strength session and a
+    // conditioning session), and all of them should be highlighted
+    // together, matching what "last sessions" actually meant here.
+    // Same precedent the Intensity vs Force Bias chart already
+    // established for showing a default at all — extended to a group
+    // rather than one point. The insight card still shows just one
+    // session's detail, since it's a single-session view — the latest
+    // one BY FULL TIMESTAMP among that day's sessions, not an arbitrary
+    // pick, so it's deterministic.
     if (points.length) {
-      const latestPoint = points.reduce((a, b) => new Date(a.date) > new Date(b.date) ? a : b);
-      window._psSelectedPoint = latestPoint;
-      _updatePowerScatterInsightCard(latestPoint, points, frontierPoints);
+      const latestDate = points.reduce((max, p) => {
+        const d = localDateStr(new Date(p.entry.date));
+        return d > max ? d : max;
+      }, localDateStr(new Date(points[0].entry.date)));
+      const latestDayPoints = points.filter(p => localDateStr(new Date(p.entry.date)) === latestDate);
+      window._psSelectedPoints = latestDayPoints;
+      const insightTarget = latestDayPoints.reduce((a, b) => new Date(a.entry.date) > new Date(b.entry.date) ? a : b);
+      _updatePowerScatterInsightCard(insightTarget, points, frontierPoints);
       // Chart.js's initial render already happened synchronously inside
-      // new Chart() above, before _psSelectedPoint was set — without an
-      // explicit update() here, the ring wouldn't actually appear until
-      // the next unrelated redraw.
+      // new Chart() above, before _psSelectedPoints was set — without
+      // an explicit update() here, the rings wouldn't actually appear
+      // until the next unrelated redraw.
       chartInstances[instKey].update();
     }
     // Stashed after creation (not before — need the auto-computed

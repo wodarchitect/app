@@ -276,7 +276,7 @@ function _wireWorkbenchControls() {
         // detail: the insight card (if a point is selected) and the
         // Workbench's own target (if one is pinned) — both depend on
         // gate thresholds too.
-        if (window._fbdSelectedPoint) _updateFbDurationInsightCard(window._fbdSelectedPoint);
+        if (window._fbdSelectedPoints && window._fbdSelectedPoints.length) _updateFbDurationInsightCard(window._fbdSelectedPoints[0]);
         if (window._workbenchTarget) _selectWorkbenchTarget(window._workbenchTarget);
       });
     };
@@ -313,7 +313,7 @@ function _fbDurationSyncSlidersFromChart(chart) {
 // Fires on every 'input' tick while a slider handle is being dragged —
 // deliberately does NOT call renderFbDurationChart (that destroys and
 // rebuilds the whole chart, recomputing match-state and wiping
-// window._fbdSelectedPoint on every tick, which would feel sluggish and
+// window._fbdSelectedPoints on every tick, which would feel sluggish and
 // keep losing the current selection mid-drag). Instead it just nudges
 // the already-live chart instance's axis bounds directly and redraws
 // with Chart.js's 'none' animation mode for an instant, cheap update.
@@ -369,7 +369,7 @@ function _selectWorkbenchTarget(entry) {
   window._workbenchTarget = entry;
   _refreshWorkbenchMatchState(getHistory());
   // Lightweight update, not a full renderFbDurationChart rebuild — a
-  // rebuild would reset window._fbdSelectedPoint (see
+  // rebuild would reset window._fbdSelectedPoints (see
   // renderFbDurationChart's own comment on why), which would silently
   // undo the very selection this highlighting is meant to show.
   const fsChart = chartInstances.fbduration_fs;
@@ -777,7 +777,7 @@ function _fbdHexWithOpacity(hex, opacity) {
 // chart's color callbacks. Deliberately window-level rather than a
 // local variable inside renderFbDurationChart: selecting a target only
 // triggers a lightweight chart.update() (see _selectWorkbenchTarget),
-// not a full rebuild — a full rebuild would wipe window._fbdSelectedPoint,
+// not a full rebuild — a full rebuild would wipe window._fbdSelectedPoints,
 // undoing the very selection the update is meant to reflect. Callable
 // independently from target selection and threshold changes alike, so
 // the color callbacks always read current state regardless of which
@@ -809,7 +809,7 @@ function renderFbDurationChart(canvasId, filters) {
   // all of those paths funnel through, means every trigger is covered
   // uniformly rather than needing the same fix repeated in each handler.
   if (isFullscreen) {
-    window._fbdSelectedPoint = null;
+    window._fbdSelectedPoints = null;
     const card = document.getElementById('fbd-insight-card');
     if (card) card.style.display = 'none';
   }
@@ -843,6 +843,26 @@ function renderFbDurationChart(canvasId, filters) {
     })
     .filter(p => !fbRange || (p.y >= fbRange[0] && p.y < fbRange[1]))
     .filter(p => !durRange || (p.x >= durRange[0] && p.x < durRange[1]));
+
+  // Every session from the most recent calendar day — not selection
+  // state, always on, compact card included, same as the halo the
+  // Intensity vs Force Bias chart already shows unconditionally. Points
+  // keep their own MET-gradient fill color here — that's a genuinely
+  // meaningful signal on this specific chart, and a flat orange
+  // override would destroy it; the halo layers on top instead of
+  // replacing it.
+  // localDateStr (local-timezone Date methods), not p.date's own UTC
+  // slice — a session logged late at night in a timezone behind UTC can
+  // have a UTC-equivalent date that's already rolled to the next day,
+  // splitting what's actually the same local training day across two
+  // different UTC dates. Matches the same localDateStr approach the
+  // Intensity vs Force Bias chart already uses correctly for this exact
+  // grouping.
+  const wbLatestDay = points.length ? points.reduce((max, p) => {
+    const d = localDateStr(new Date(p.entry.date));
+    return d > max ? d : max;
+  }, localDateStr(new Date(points[0].entry.date))) : null;
+  const wbLatestDayPoints = wbLatestDay ? points.filter(p => localDateStr(new Date(p.entry.date)) === wbLatestDay) : [];
 
   // Workbench match-status — see _refreshWorkbenchMatchState for why
   // this is window-cached rather than a local variable computed here:
@@ -928,33 +948,38 @@ function renderFbDurationChart(canvasId, filters) {
   // Glow drawn BEHIND the selected point (beforeDatasetsDraw, not
   // after) so it sits underneath Chart.js's own normal point rendering
   // rather than duplicating a second circle on top of it. Selection is
-  // tracked by direct object reference (window._fbdSelectedPoint === p),
-  // same principle as the entry reference used for Session Match —
-  // matching by date/label string would risk two different sessions
-  // sharing values and both lighting up.
+  // tracked as an array (window._fbdSelectedPoints), not a single
+  // point — the default selection is every session from the most
+  // recent training day, which can be more than one; a manual tap
+  // narrows it to just that one point. Matched by direct object
+  // reference (Array.includes), same principle as the entry reference
+  // used for Session Match — matching by date/label string would risk
+  // two different sessions sharing values and both lighting up.
   const selectedGlowPlugin = {
     id: 'fbdSelectedGlow',
     beforeDatasetsDraw(chart) {
-      if (!window._fbdSelectedPoint) return;
+      if (!window._fbdSelectedPoints || !window._fbdSelectedPoints.length) return;
       const meta = chart.getDatasetMeta(0);
       if (!meta || !meta.data) return;
-      const idx = points.indexOf(window._fbdSelectedPoint);
-      if (idx < 0 || !meta.data[idx]) return;
-      const el = meta.data[idx];
       const ctx = chart.ctx;
-      // Crisp ring at a fixed radius, no blur — a blurred shadow has no
-      // hard edge, so in a dense cluster its diffuse glow can visually
-      // wash over neighboring dots that aren't actually selected. A
-      // stroked ring has a precise boundary and can't bleed onto
-      // anything outside it, regardless of how tightly other points are
-      // clustered nearby.
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(el.x, el.y, 13, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,107,53,0.85)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.restore();
+      window._fbdSelectedPoints.forEach(sel => {
+        const idx = points.indexOf(sel);
+        if (idx < 0 || !meta.data[idx]) return;
+        const el = meta.data[idx];
+        // Crisp ring at a fixed radius, no blur — a blurred shadow has no
+        // hard edge, so in a dense cluster its diffuse glow can visually
+        // wash over neighboring dots that aren't actually selected. A
+        // stroked ring has a precise boundary and can't bleed onto
+        // anything outside it, regardless of how tightly other points are
+        // clustered nearby.
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(el.x, el.y, 13, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,107,53,0.85)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      });
     }
   };
 
@@ -978,7 +1003,7 @@ function renderFbDurationChart(canvasId, filters) {
         // genuinely high-MET UNselected point could look selected too.
         // White appears nowhere in the blue-yellow-red spectrum, so
         // there's no value of MET that can collide with it.
-        if (p && window._fbdSelectedPoint === p) return '#FFFFFF';
+        if (p && window._fbdSelectedPoints && window._fbdSelectedPoints.includes(p)) return '#FFFFFF';
         // Workbench match-status — sessions with zero matches at the
         // current gate thresholds render muted grey regardless of MET,
         // per explicit direction. Sessions with matches keep their MET
@@ -1019,7 +1044,7 @@ function renderFbDurationChart(canvasId, filters) {
         // matches, so the fill (white for the target, MET-color for
         // matches) is what actually distinguishes them from each
         // other; the ring itself just means "part of this comparison."
-        if (p && window._fbdSelectedPoint === p) return '#FF6B35';
+        if (p && window._fbdSelectedPoints && window._fbdSelectedPoints.includes(p)) return '#FF6B35';
         if (window._fbdTargetMatchDates && p && window._fbdTargetMatchDates.has(p.entry?.date)) return '#FF6B35';
         if (window._fbdMatchCounts && p) {
           const n = window._fbdMatchCounts.get(p.entry?.date) || 0;
@@ -1040,12 +1065,12 @@ function renderFbDurationChart(canvasId, filters) {
       },
       borderWidth: ctx => {
         const p = ctx.raw;
-        if (p && window._fbdSelectedPoint === p) return 3;
+        if (p && window._fbdSelectedPoints && window._fbdSelectedPoints.includes(p)) return 3;
         if (window._fbdTargetMatchDates && p && window._fbdTargetMatchDates.has(p.entry?.date)) return 3;
         return 1;
       },
-      pointRadius: ctx => (ctx.raw && window._fbdSelectedPoint === ctx.raw) ? 9 : 6,
-      pointHoverRadius: ctx => (ctx.raw && window._fbdSelectedPoint === ctx.raw) ? 10 : 8
+      pointRadius: ctx => (ctx.raw && window._fbdSelectedPoints && window._fbdSelectedPoints.includes(ctx.raw)) ? 9 : 6,
+      pointHoverRadius: ctx => (ctx.raw && window._fbdSelectedPoints && window._fbdSelectedPoints.includes(ctx.raw)) ? 10 : 8
     }]},
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -1081,31 +1106,68 @@ function renderFbDurationChart(canvasId, filters) {
       onClick: isFullscreen ? (evt, elements) => {
         if (!elements.length) return;
         const point = points[elements[0].index];
-        window._fbdSelectedPoint = point;
+        // A manual tap always selects just that one point — the
+        // multi-select default (every session from the most recent
+        // training day) only applies before the athlete has picked
+        // anything specific.
+        window._fbdSelectedPoints = [point];
         _updateFbDurationInsightCard(point);
         chartInstances[instKey]?.update();
       } : undefined
     },
-    plugins: [gapGridPlugin, targetZonePlugin, selectedGlowPlugin]
+    plugins: [gapGridPlugin, targetZonePlugin, selectedGlowPlugin, {
+      id: 'fbdLatestDayHalo',
+      afterDatasetsDraw(chart) {
+        if (!wbLatestDayPoints.length) return;
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        wbLatestDayPoints.forEach(p => {
+          const idx = points.indexOf(p);
+          if (idx < 0 || !meta.data[idx]) return;
+          const el = meta.data[idx];
+          ctx.beginPath();
+          ctx.arc(el.x, el.y, 16, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,107,53,0.4)';
+          ctx.lineWidth = 6;
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+    }]
   };
 
   chartInstances[instKey] = new Chart(canvas, cfg);
   if (isFullscreen) {
     window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
-    // Default selection — most recent session, highlighted immediately
-    // on open rather than only after a tap. Same precedent the
-    // Intensity vs Force Bias chart already established, and the same
-    // approach just applied to the Engine Frontier (Power Scatter)
-    // chart: the insight card should show which dot it's describing
-    // from the moment the chart opens, not leave it to be discovered
-    // by tapping around.
+    // Default selection — every session from the most recent TRAINING
+    // DAY, not just a single most-recent session: a training day can
+    // have more than one session (e.g. a strength session and a
+    // conditioning session), and all of them should be highlighted
+    // together, matching what "last sessions" actually meant here.
+    // Same precedent the Intensity vs Force Bias chart already
+    // established for showing a default at all, extended to a group
+    // rather than one point, and the same approach just applied to the
+    // Engine Frontier (Power Scatter) chart. The insight card still
+    // shows just one session's detail, since it's a single-session
+    // view — the latest one BY FULL TIMESTAMP among that day's
+    // sessions (kept first in the array by convention, so any later
+    // refresh of the insight card — e.g. after a gate threshold change
+    // — can just read window._fbdSelectedPoints[0] rather than needing
+    // a second, separately-tracked variable).
     if (points.length) {
-      const latestPoint = points.reduce((a, b) => new Date(a.date) > new Date(b.date) ? a : b);
-      window._fbdSelectedPoint = latestPoint;
-      _updateFbDurationInsightCard(latestPoint);
+      const latestDate = points.reduce((max, p) => {
+        const d = localDateStr(new Date(p.entry.date));
+        return d > max ? d : max;
+      }, localDateStr(new Date(points[0].entry.date)));
+      const latestDayPoints = points.filter(p => localDateStr(new Date(p.entry.date)) === latestDate);
+      const insightTarget = latestDayPoints.reduce((a, b) => new Date(a.entry.date) > new Date(b.entry.date) ? a : b);
+      window._fbdSelectedPoints = [insightTarget, ...latestDayPoints.filter(p => p !== insightTarget)];
+      _updateFbDurationInsightCard(insightTarget);
       // Chart.js's initial render already happened synchronously inside
-      // new Chart() above, before _fbdSelectedPoint was set — without
-      // an explicit update() here, the ring wouldn't actually appear
+      // new Chart() above, before _fbdSelectedPoints was set — without
+      // an explicit update() here, the rings wouldn't actually appear
       // until the next unrelated redraw.
       chartInstances[instKey].update();
     }
@@ -1284,7 +1346,7 @@ function openFbDurationFullscreen() {
   _hideAllChartSpecificUI();
   window._fbdShowGaps = false;
   window._fbdActiveZone = null;
-  window._fbdSelectedPoint = null;
+  window._fbdSelectedPoints = null;
   window._workbenchTarget = null;
 
   const wrap = document.getElementById('chart-fs-canvas-wrap');
@@ -1412,7 +1474,7 @@ function openPowerScatterFullscreen() {
   document.getElementById('chart-fs-title').textContent = `${t('chart.powerscatter.x')} / ${t('chart.powerscatter.y')}`;
   fs.classList.add('open');
   _hideAllChartSpecificUI();
-  window._psSelectedPoint = null;
+  window._psSelectedPoints = null;
 
   const wrap = document.getElementById('chart-fs-canvas-wrap');
   wrap.style.display = '';
