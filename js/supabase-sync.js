@@ -1055,35 +1055,18 @@ async function _finishSbSave(wodLabel, e) {
     patternProfile: _lastPatternProfile || { patternPct:{}, dominantPattern:'unknown' },
     patternProfileVersion: PATTERN_PROFILE_TARGET_VERSION,
     roundSplits: _roundSplits.length > 0 ? [..._roundSplits] : null,
-    radar: (() => {
-      // Read directly from DOM results — always available at save time
-      const pd = parseFloat(document.getElementById('resPD')?.innerText)||0;
-      const wd = parseFloat(document.getElementById('resWD')?.innerText)||0;
-      const mc = parseFloat(document.getElementById('resMC')?.innerText)||0;
-      const fb = parseFloat(document.getElementById('resFB')?.innerText)||0;
-      const rlEl = document.getElementById('resRL-card');
-      const rl = (rlEl?.style.display !== 'none') ? parseFloat(document.getElementById('resRL')?.innerText)||0 : 0;
-      const tdEl = document.getElementById('resTD');
-      const td = parseFloat(tdEl?.innerText)||0;
-      if (!pd && !wd && !mc) return null;
-      const mx = {
-        pd: getEffectiveBands('totalpower')?.max || 3.5,
-        wd: getEffectiveBands('wd')?.max || 200,
-        mc: getEffectiveBands('mc')?.max || 200,
-        fb: getEffectiveBands('fb')?.max || 200,
-        rl: 100, td: 5
-      };
-      return {
-        pd: Math.min(1, Math.max(0, pd / mx.pd)),
-        wd: Math.min(1, Math.max(0, wd / mx.wd)),
-        mc: Math.min(1, Math.max(0, mc / mx.mc)),
-        fb: Math.min(1, Math.max(0, fb / mx.fb)),
-        rl: Math.min(1, Math.max(0, rl / mx.rl)),
-        td: Math.min(1, Math.max(0, td / mx.td)),
-        _normalised: true,
-        _v: 2 // normalization version: 2 = no personal-band headroom (post fix)
-      };
-    })()
+    // Radar built the same way history.js's saveModularToHistory() does —
+    // this function used to build it inline with the OLD 6-axis scheme
+    // (pd/wd/mc/fb/rl/td, _v:2), from before the radar axes changed to
+    // cvIntensity/internalLoad (_v:3). Every session saved through this
+    // path got a permanently-outdated radar that could never pass the
+    // repair button's version check — not a one-time gap, every single
+    // save via this button re-triggered it. Needs blockSegments/
+    // vo2max_used/bw already set on `entry` first, since
+    // computeRadarValuesForSession → getSessionCVEndurance reads those;
+    // populated further below in this same function, so this radar
+    // computation is deferred there rather than done here.
+    radar: null
   };
 
   // RPE was already collected as part of result entry, per block, then
@@ -1093,15 +1076,46 @@ async function _finishSbSave(wodLabel, e) {
   const rpe = window._lastComputedRPE || null;
   entry.rpe = rpe;
   entry.blockRpe = window._lastBlockRpeList || null;
-  try { entry.blockSegments = _buildAllBlockSegments(); } catch (e) { entry.blockSegments = null; }
+  // Reuses window._lastBlockSegments frozen at Calculate time
+  // (physics-core.js), not a fresh _buildAllBlockSegments() call — same
+  // fix as history.js's save path, for the same reason: any HR samples
+  // streaming in between Calculate and this save (even during a brief
+  // cool-down) would otherwise produce different segment data than what
+  // Calculate already showed, silently shifting Overall/Work/Running/DU
+  // Efficiency between what was displayed live and what got saved.
+  try { entry.blockSegments = window._lastBlockSegments !== undefined ? window._lastBlockSegments : _buildAllBlockSegments(); } catch (e) { entry.blockSegments = null; }
   try { entry.restSegments = _buildRestSegments(); } catch (e) { entry.restSegments = null; }
   try {
-    const sessionHR = _hrStatsForRange(0, Date.now());
+    // Reuses window._lastSessionHR frozen at Calculate time, not a
+    // fresh _hrStatsForRange(0, Date.now()) call — same fix as
+    // history.js's save path: a second, independent call with its own
+    // later Date.now() could include HR samples that arrived after
+    // Calculate, making the saved avgHR/maxHR drift from what was
+    // actually displayed live.
+    const sessionHR = window._lastSessionHR !== undefined ? window._lastSessionHR : _hrStatsForRange(0, Date.now());
     entry.avgHR = sessionHR ? sessionHR.avg : null;
     entry.maxHR = sessionHR ? sessionHR.max : null;
   } catch (e) { entry.avgHR = null; entry.maxHR = null; }
   try { entry.cardioIntervalSummary = _buildCardioIntervalSummary(); } catch (e) { entry.cardioIntervalSummary = null; }
   _updateERawForEntry(entry);
+  // Session Signature radar — same computation history.js's save flow
+  // uses, run here (not inline above) since computeRadarValuesForSession
+  // → getSessionCVEndurance needs entry.blockSegments/vo2max_used/bw,
+  // all set by this point.
+  try {
+    const _radarRaw = computeRadarValuesForSession(entry);
+    const _radarMaxes = getRadarMaxes();
+    entry.radar = {
+      pd: Math.min(1, Math.max(0, _radarRaw.pd / _radarMaxes.pd)),
+      wd: Math.min(1, Math.max(0, _radarRaw.wd / _radarMaxes.wd)),
+      cvIntensity: Math.min(1, Math.max(0, _radarRaw.cvIntensity / _radarMaxes.cvIntensity)),
+      fb: Math.min(1, Math.max(0, _radarRaw.fb / _radarMaxes.fb)),
+      internalLoad: Math.min(1, Math.max(0, _radarRaw.internalLoad / _radarMaxes.internalLoad)),
+      td: Math.min(1, Math.max(0, _radarRaw.td / _radarMaxes.td)),
+      _normalised: true,
+      _v: 3
+    };
+  } catch (e) { console.error('[radar save] computeRadarValuesForSession/getRadarMaxes threw — entry.radar left null:', e); entry.radar = null; }
 
   // 1. Save to local history
   const hist = getHistory();

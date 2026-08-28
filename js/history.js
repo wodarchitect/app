@@ -298,10 +298,19 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
   entry.blockRpe = window._lastBlockRpeList || null;
   // blockSegments — real per-segment HR data where captured (cardio
   // toggle + connected strap), falling back to whole-block HR or manual
-  // RPE per _buildBlockSegments(). Not yet read by the calculation
-  // (that's Step 2) — captured now so it exists for the sessions logged
-  // between now and when Step 2 ships.
-  try { entry.blockSegments = _buildAllBlockSegments(); } catch (e) { entry.blockSegments = null; }
+  // RPE per _buildBlockSegments(). Reuses whatever was frozen into
+  // window._lastBlockSegments at Calculate time (physics-core.js),
+  // rather than calling _buildAllBlockSegments() fresh here — that used
+  // to be a second, independent call, so any HR samples streaming in
+  // between Calculate and Save (even during a brief cool-down) could
+  // make this produce different segment data than what Calculate
+  // already showed, silently shifting Overall/Work/Running/DU
+  // Efficiency between what was displayed live and what got saved. Same
+  // bug, same fix, as the avgHR/maxHR freeze just below — this field
+  // just didn't exist yet when that fix was made. Falls back to a fresh
+  // call only if nothing was frozen (e.g. Calculate was never run this
+  // session for some reason), same defensive pattern as the HR reuse.
+  try { entry.blockSegments = window._lastBlockSegments !== undefined ? window._lastBlockSegments : _buildAllBlockSegments(); } catch (e) { entry.blockSegments = null; }
   try { entry.restSegments = _buildRestSegments(); } catch (e) { entry.restSegments = null; }
   try {
     // Reuses whatever was frozen into window._lastSessionHR at
@@ -355,7 +364,7 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
       _normalised: true,
       _v: 3
     };
-  } catch (e) { entry.radar = null; }
+  } catch (e) { console.error('[radar save] computeRadarValuesForSession/getRadarMaxes threw — entry.radar left null:', e); entry.radar = null; }
   {
     const hist = getHistory();
     hist.unshift(entry);

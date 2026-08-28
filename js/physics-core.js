@@ -215,6 +215,22 @@ function _getBlockWindow(blockIdx, expectedDurationSec) {
 // minus the block's own mechKcal (clamped >=0) for blockOverhead.
 function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTotal, bw, vo2max, ageFactor, genderFactor, hrRest, hrMax) {
   let overhead = 0;
+  // Defensive: this function was originally written only for the live
+  // flow, where _buildBlockSegments() always guarantees well-formed
+  // segment objects. Now that getSessionCVEndurance also calls this on
+  // entry.blockSegments read back from SAVED history — data that could
+  // have been written by an older version of the save logic, or hit an
+  // edge case the live flow never produces — that guarantee no longer
+  // holds unconditionally. A single malformed/null segment here used to
+  // throw (segments[0].type, seg.type inside forEach with no guard),
+  // which propagated all the way up through computeRadarValuesForSession
+  // and got silently swallowed by history.js's save-time try/catch —
+  // silently leaving entry.radar null and making the "Update Session
+  // Signatures" repair button reappear with no visible error anywhere
+  // to explain why. Filtering out non-object entries here stops that at
+  // the source, in the shared function every caller of this eventually
+  // depends on, rather than requiring every caller to re-guard against it.
+  segments = Array.isArray(segments) ? segments.filter(s => s && typeof s === 'object') : [];
   // cv starts at blockCardioKcalTotal ONLY when segments are genuinely
   // split by real time — _buildBlockSegments' "mechanical" segment has
   // cardio-toggle time already subtracted out (mechDurationSec =
@@ -249,7 +265,7 @@ function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTota
   segments.forEach(seg => {
     if (cardioTypes.includes(seg.type)) return; // handled via blockCardioKcalTotal above
     let relIntensity = null;
-    if (seg.source === 'hr_segment' && hrRest != null && hrMax != null && hrMax > hrRest) {
+    if (seg.source === 'hr_segment' && hrRest != null && hrMax != null && hrMax > hrRest && typeof seg.avgHR === 'number') {
       relIntensity = Math.max(0, Math.min(1, (seg.avgHR - hrRest) / (hrMax - hrRest)));
     } else if (seg.source === 'manual_rpe' && seg.rpe) {
       relIntensity = Math.min(1.0, seg.rpe / 10);
@@ -257,7 +273,7 @@ function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTota
       return; // 'no_hr' (toggled but strap disconnected during it) — no usable signal, contributes nothing rather than guessing
     }
     const met = (relIntensity * vo2max) / 3.5;
-    const timeHours = seg.durationSec / 3600;
+    const timeHours = (seg.durationSec || 0) / 3600;
     const segTotalMetEstimate = met * bw * timeHours * ageFactor * genderFactor;
     overhead += Math.max(0, segTotalMetEstimate - blockMechKcal - overheadCardioSubtraction);
     cv += segTotalMetEstimate;
@@ -1789,6 +1805,17 @@ function calculateGlobalPhysics() {
   // later, rather than always using whatever bodyweight is on the profile *now*.
   window._lastDurationSec = tas;
   window._lastBodyweight = bw;
+  // Block segments frozen here too, same reasoning and same precedent as
+  // _lastSessionHR below — _buildAllBlockSegments() reads live HR
+  // samples, and any that stream in between Calculate and Save (even
+  // during a brief cool-down) would otherwise make the save-time call
+  // in history.js produce different segment data than what Calculate
+  // already showed here, silently shifting Overall/Work/Running/DU
+  // Efficiency and the segmented MET-minutes between what was displayed
+  // live and what got saved. The original HR-freeze fix only covered
+  // avgHR/maxHR — blockSegments didn't exist as a concept yet when that
+  // fix was made, so it was never brought under the same protection.
+  window._lastBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null;
   // Relative Loading — always show, 0% if no 1RM matched. Value now
   // lives in the Session Data card's RL column (bold hero number, plain
   // white/text-colored to match HR and MC's hero numbers there) rather
@@ -1925,7 +1952,7 @@ function calculateGlobalPhysics() {
           duration_sec: window._lastDurationSec,
           vo2max_used: window._lastVo2max,
           blocks: serializeBlocksForTemplate(),
-          blockSegments: (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null
+          blockSegments: window._lastBlockSegments
         };
         segmented = getSegmentedEfficiency(previewEntryForSegmented);
       } catch (e) {}
