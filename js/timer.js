@@ -444,7 +444,18 @@ function setSwipeMode(mode) {
             initBlock();
           }, 200);
         } else {
-          setTimeout(() => { finishCurrentBlock(); }, 220);
+          // Captured at the moment the swipe gesture actually
+          // completes — the true "athlete decided to stop" moment for
+          // a manual finish, unlike the auto-detected paths above,
+          // there's no fixed prescribed duration to fall back on here.
+          // Passed through as knownElapsedSec so finishCurrentBlock
+          // uses this precise moment rather than whatever Date.now()
+          // happens to be after the 220ms delay — same throttling risk
+          // as every other setTimeout-wrapped call site: if the screen
+          // locks/backgrounds in that window, the callback can fire
+          // meaningfully later than 220ms.
+          const _finishElapsedSec = (Date.now() - window._hrBlockStartMs) / 1000;
+          setTimeout(() => { finishCurrentBlock(_finishElapsedSec); }, 220);
         }
       } else {
         snapBack();
@@ -773,7 +784,16 @@ function runEngine() {
             speak(tabataRound === hr ? 'Halfway, Rest' : 'Rest');
           } else {
             tabataRound++;
-            if (tabataRound > tabataTotalRounds) { _rafRunning = false; finishCurrentBlock(); return; }
+            // knownElapsedSec = the full prescribed TABATA duration
+            // (every round includes both work and rest, including the
+            // final one, since this check only runs in the "just
+            // finished resting" branch) — same fix as the FORTIME-cap
+            // and round-completion paths: this finish check runs inside
+            // the same requestAnimationFrame loop as those, so a
+            // backgrounded/locked screen can delay this exact frame the
+            // same way, letting Date.now() drift past the block's true
+            // prescribed end.
+            if (tabataRound > tabataTotalRounds) { _rafRunning = false; finishCurrentBlock(tabataTotalRounds * (ws + rs)); return; }
             tabataPhase = 'work'; blockSec = ws; playAlarm(2500, .6);
             _lastTickTime = now; // reset elapsed on phase change
             speak(tabataRound === Math.ceil(tabataTotalRounds/2)+1 ? `Last half, Round ${tabataRound}, Work` : `Round ${tabataRound}, Work`);
@@ -802,8 +822,16 @@ function runEngine() {
 
       // EMOM / EXMOM interval cycling
       if ((mode === 'emom' || mode === 'exmom') && blockSec <= 0) {
-        if (emomRound >= emomTotalRounds) { _rafRunning = false; finishCurrentBlock(); return; }
         const intLen = parseInt(bEl.querySelector('.b-int').value) || 60;
+        // knownElapsedSec = the full prescribed EMOM/EXMOM duration
+        // (every round uses the same fixed interval length) — same
+        // fix as the FORTIME-cap/round-completion/TABATA paths: this
+        // finish check runs inside the same requestAnimationFrame loop
+        // as those, so a backgrounded/locked screen can delay this
+        // exact frame the same way, letting Date.now() drift past the
+        // block's true prescribed end. intLen moved above this check
+        // (was previously computed after it) so it's available here.
+        if (emomRound >= emomTotalRounds) { _rafRunning = false; finishCurrentBlock(emomTotalRounds * intLen); return; }
         const lr = document.getElementById('timerLastRound');
         if (lr) lr.textContent = `✓ ${mode === 'exmom' ? t('exmom.interval') : 'Interval'} ${emomRound} complete`;
         emomRound++;
@@ -862,7 +890,13 @@ function runEngine() {
         } else if (banner) { banner.textContent = ''; banner.classList.remove('pulsing'); }
       }
 
-      if (mode !== 'fortime' && mode !== 'emom' && mode !== 'exmom' && blockSec <= 0) { _rafRunning = false; finishCurrentBlock(); return; }
+      // knownElapsedSec = amrapFullTime, the full prescribed AMRAP
+      // duration — same fix as the FORTIME-cap/round-completion/
+      // TABATA/EMOM paths: this finish check runs inside the same
+      // requestAnimationFrame loop as those, so a backgrounded/locked
+      // screen can delay this exact frame the same way, letting
+      // Date.now() drift past the block's true prescribed end.
+      if (mode !== 'fortime' && mode !== 'emom' && mode !== 'exmom' && blockSec <= 0) { _rafRunning = false; finishCurrentBlock(amrapFullTime); return; }
       if (mode === 'fortime' && blockSec >= capSec) { _rafRunning = false; finishCurrentBlock(capSec); return; }
     }
 
