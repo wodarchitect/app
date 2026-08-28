@@ -940,9 +940,20 @@ function finishCurrentBlock(knownElapsedSec) {
   const bEl = document.querySelectorAll('.wod-block')[activeBlockIdx];
   if (bEl) {
     const mode = bEl.querySelector('.b-mode').value;
-    // Always use actual elapsed timer time regardless of modality
+    // Prefer knownElapsedSec (now passed by every call site) over
+    // re-reading the live blockSec/totalSessionSec counters here. Not
+    // just for consistency with the _endMs fix below — those counters
+    // only ever increment by exactly 1 per tick, regardless of how much
+    // real time actually passed (if (elapsed >= 1000) { blockSec++ }
+    // has no catch-up logic), so a throttled RAF loop makes them
+    // UNDER-count true elapsed time, not drift later the way Date.now()
+    // does. For the manual swipe-to-finish path specifically,
+    // knownElapsedSec is captured from Date.now() at the actual gesture
+    // moment, which is more accurate than either failure mode.
     let elapsedSec;
-    if (mode === 'fortime') {
+    if (knownElapsedSec != null) {
+      elapsedSec = Math.round(knownElapsedSec);
+    } else if (mode === 'fortime') {
       elapsedSec = Math.abs(blockSec);
     } else if (mode === 'amrap') {
       elapsedSec = amrapFullTime - blockSec;
