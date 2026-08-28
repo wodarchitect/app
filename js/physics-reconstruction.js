@@ -314,10 +314,23 @@ function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
 //    toward Overall Efficiency (via the existing, unchanged
 //    getEngineScoreERaw), just not toward the mechanical-specific
 //    breakdown.
+// Unified with Overall Efficiency's own calculation (_computeBlockOverheadAndCV,
+// physics-core.js) rather than a second, independent formula — proven
+// algebraically identical (bodyweight/age-factor/gender-factor cancel
+// completely in the round-trip from kcal-equivalent back to
+// MET-minutes, leaving plain met×time either way), so this was two
+// implementations of the same math that could silently drift apart if
+// one got touched later and the other didn't. Passing 0 for both
+// blockMechKcal and blockCardioKcalTotal isolates just the mechanical
+// segment's own contribution to cv, ignoring the overhead figure
+// entirely (not needed here) and any cardio contribution (handled
+// separately by getCardioTypeMetMinutes for Running/DU Efficiency).
 function getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFactor) {
   if (!vo2max || !bw) return null;
   const blockSegments = entry.blockSegments;
   if (!Array.isArray(blockSegments) || !blockSegments.length) return null;
+  const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
+  const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
 
   let metMinutes = 0;
   let anyContribution = false;
@@ -331,30 +344,13 @@ function getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFact
       const block = (entry.blocks || [])[blockIndex];
       const hasCardioMov = block && (block.movements || []).some(mv => MASTER_DB[mv.name]?.cardio);
       if (hasCardioMov) return; // indeterminate split — excluded, not guessed
-      const seg = segments[0];
-      if (seg.source !== 'manual_rpe' || !seg.rpe || !seg.durationSec) return;
-      const relIntensity = Math.min(1.0, seg.rpe / 10);
-      const met = (relIntensity * vo2max) / 3.5;
-      metMinutes += met * (seg.durationSec / 60);
-      anyContribution = true;
-      return;
     }
 
-    // Real segmentation — pull out just the mechanical segment(s).
-    segments.filter(s => s.type === 'mechanical').forEach(seg => {
-      let relIntensity = null;
-      if (seg.source === 'hr_segment') {
-        const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
-        const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
-        if (hrRestVal != null && hrMaxVal != null && hrMaxVal > hrRestVal) {
-          relIntensity = Math.max(0, Math.min(1, (seg.avgHR - hrRestVal) / (hrMaxVal - hrRestVal)));
-        }
-      }
-      if (relIntensity == null) return; // 'no_hr', or hr_segment without profile HR fields set — no usable signal
-      const met = (relIntensity * vo2max) / 3.5;
-      metMinutes += met * ((seg.durationSec || 0) / 60);
+    const result = _computeBlockOverheadAndCV(segments, 0, 0, bw, vo2max, ageFactor, genderFactor, hrRestVal, hrMaxVal);
+    if (result.cv > 0) {
+      metMinutes += result.cv * 60 / (bw * ageFactor * genderFactor);
       anyContribution = true;
-    });
+    }
   });
 
   return anyContribution ? metMinutes : null;

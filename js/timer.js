@@ -891,11 +891,18 @@ function runEngine() {
   requestAnimationFrame(_engineFrame);
 }
 
-// capDurationSec: optional — see the _blockTimeWindows.push() comment
-// below for why this exists (clamps a capped FORTIME block's recorded
-// end time to the actual cap boundary rather than whenever this
-// function happens to run).
-function finishCurrentBlock(capDurationSec) {
+// knownElapsedSec: optional — see the _blockTimeWindows.push() comment
+// below for why this exists (clamps a block's recorded end time to the
+// precise moment its completion was actually detected, rather than
+// whenever this function happens to run). Originally only the
+// FORTIME-cap path passed this (as capDurationSec); the all-rounds-
+// complete path had the identical vulnerability and never got the
+// same fix — it calls this via setTimeout(fn, 150) after the round tap,
+// and if the screen locks or backgrounds in that window (plausible
+// right after finishing a hard round), the browser throttles the
+// timeout well past 150ms, so Date.now() at that point could be many
+// seconds later than the round was actually completed.
+function finishCurrentBlock(knownElapsedSec) {
   const bEl = document.querySelectorAll('.wod-block')[activeBlockIdx];
   if (bEl) {
     const mode = bEl.querySelector('.b-mode').value;
@@ -922,22 +929,23 @@ function finishCurrentBlock(capDurationSec) {
   }
   if (timerItv?.cancel) timerItv.cancel(); else if (timerItv?.cancel) timerItv.cancel(); else clearInterval(timerItv);
   const _finishedBlockIdx = activeBlockIdx;
-  // capDurationSec, when passed (currently only the FORTIME cap-hit
-  // path above does), clamps this block's recorded end time to exactly
-  // startMs + capDurationSec — not whenever this line of code actually
-  // executes. Date.now() alone drifts from the real cap boundary
-  // whenever there's any delay between the cap being crossed and this
-  // running — a backgrounded tab/locked screen throttles the
-  // requestAnimationFrame loop that detects the cap, so that delay can
-  // be real seconds, not just a frame or two. Without this, a block
-  // scored as an exact 15:00 cap could get 15:37 of segment data
-  // (HR/cardio-toggle time) attributed to it — genuinely more seconds
-  // of tracked data than the scored block ever contained. Manual/early
-  // finishes (every other call site) pass nothing and keep the real
-  // Date.now(), since that IS the correct end time when the athlete
-  // actually decided to stop.
-  const _endMs = capDurationSec != null
-    ? Math.min(Date.now(), window._hrBlockStartMs + capDurationSec * 1000)
+  // knownElapsedSec, when passed, clamps this block's recorded end time
+  // to exactly startMs + knownElapsedSec — not whenever this line of
+  // code actually executes. Date.now() alone drifts from the real
+  // completion moment whenever there's any delay between that moment
+  // and this running — a backgrounded tab/locked screen throttles
+  // both the requestAnimationFrame loop (cap-detection) and setTimeout
+  // (round-completion auto-finish) that can trigger this, so that delay
+  // can be real seconds, not just a frame or two. Without this, a
+  // block scored as an exact 15:00 cap — or a block that finished the
+  // instant round 5 was tapped — could get 15:37, or 21:50, of segment
+  // data (HR/cardio-toggle time) attributed to it: genuinely more
+  // seconds of tracked data than the scored block ever contained.
+  // Manual/early finishes (the 'finish' button call site) pass
+  // nothing and keep the real Date.now(), since that IS the correct
+  // end time when the athlete actually decided to stop mid-block.
+  const _endMs = knownElapsedSec != null
+    ? Math.min(Date.now(), window._hrBlockStartMs + knownElapsedSec * 1000)
     : Date.now();
   window._blockTimeWindows.push({ blockIdx: _finishedBlockIdx, startMs: window._hrBlockStartMs, endMs: _endMs });
   activeBlockIdx++;
@@ -1199,7 +1207,21 @@ function incrementLiveRep() {
     const repSeq = getLadderSequence(bElR);
     const targetR = repSeq ? repSeq.length : (parseInt(bElR.querySelector('.b-target')?.value) || 0);
     if (targetR > 0 && roundNum >= targetR) {
-      setTimeout(() => finishCurrentBlock(), 150); // brief delay so the round flash completes
+      // elapsedNow is already the precise, known completion time (it's
+      // what the round split's own cumSec is built from) — passed
+      // through as knownElapsedSec so finishCurrentBlock's segment
+      // window end time is clamped to this exact moment, not whenever
+      // this setTimeout callback actually fires. Same fix as the
+      // FORTIME-cap path: if the screen locks/backgrounds in the 150ms
+      // window (plausible right after finishing a hard round), the
+      // browser can throttle the timeout well past 150ms, and
+      // Date.now() at that later point would attribute extra seconds
+      // of HR/segment data to the block that it never actually took —
+      // confirmed happening in practice: a session logged as 21:38
+      // (round split cumSec) had its mechanical segment's duration
+      // include an extra ~12s the athlete spent between completing the
+      // round and this callback actually running.
+      setTimeout(() => finishCurrentBlock(Math.abs(elapsedNow)), 150);
     }
   }
 }
