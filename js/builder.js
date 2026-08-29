@@ -690,13 +690,14 @@ function softResetCurrentWorkout() {
   // Reset start button
   // startPauseBtn removed — overlay handles state
   // Clear builder blocks, blueprint, and analytics results
+  console.log('[reset debug] .wod-block count BEFORE clearing #timeline:', document.querySelectorAll('.wod-block').length);
   document.getElementById('timeline').innerHTML = '';
+  console.log('[reset debug] .wod-block count AFTER clearing #timeline:', document.querySelectorAll('.wod-block').length);
   document.getElementById('blueprintDisplay').innerHTML = `<span style="color:var(--label);font-size:.8rem;">${t('builder.add.overview')}</span>`;
   const tdRowReset = document.getElementById('builder-td-row');
   if (tdRowReset) tdRowReset.style.display = 'none';
   document.getElementById('results').classList.add('hidden-el');
   document.getElementById('energy-profile-section').classList.add('hidden-el');
-  document.getElementById('session-match-outer').classList.add('hidden-el');
   document.getElementById('cloud-backup-section').classList.add('hidden-el');
   _lastPatternProfile = null;
   // Add a fresh empty block, close any open detail panel
@@ -1742,6 +1743,7 @@ function attachMovementListDrag(list, blockId) {
 /* ── Block list renderer ── */
 function renderBlockList() {
   const blocks = document.querySelectorAll('.wod-block');
+  console.log('[reset debug] renderBlockList() called — .wod-block count:', blocks.length, '— #block-list currently shows:', document.getElementById('block-list')?.children.length, 'child element(s)');
   const list = document.getElementById('block-list');
   if (!list) return;
   // Show FAB only when builder tab is active and template panel is not open
