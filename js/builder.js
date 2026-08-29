@@ -720,6 +720,8 @@ function softResetCurrentWorkout() {
   // Brief visual confirmation
   const rb = document.getElementById('reset-btn');
   rb.innerText = '✓ Reset'; setTimeout(() => { rb.innerText = '⟳ Reset'; }, 1200);
+  console.log('[reset debug] softResetCurrentWorkout() FINISHED — #block-list final state:', document.getElementById('block-list')?.children.length, 'child element(s), .wod-block count:', document.querySelectorAll('.wod-block').length);
+  setTimeout(() => console.log('[reset debug] 500ms AFTER reset finished — #block-list:', document.getElementById('block-list')?.children.length, 'child element(s), .wod-block count:', document.querySelectorAll('.wod-block').length), 500);
 }
 
 function fullInitialReset() {
@@ -1770,8 +1772,10 @@ function renderBlockList() {
       <div style="font-size:.9rem;font-weight:800;color:var(--text);margin-bottom:6px;">${t('empty.builder')}</div>
       <div style="font-size:.74rem;color:var(--label);line-height:1.6;max-width:240px;margin:0 auto;">${t('empty.builder.sub')}</div>
     </div>`;
+    console.log('[reset debug] renderBlockList() reached the empty-state branch — #block-list now shows:', list.children.length, 'child element(s)');
     return;
   }
+  console.log('[reset debug] renderBlockList() took the NON-empty branch despite blocks.length =', blocks.length);
   list.innerHTML = '';
   // Show rest accordion only when 2+ blocks
   const restSection = document.getElementById('rest-between-blocks-section');
