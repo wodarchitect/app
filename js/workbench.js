@@ -782,8 +782,41 @@ function _fbdHexWithOpacity(hex, opacity) {
 // independently from target selection and threshold changes alike, so
 // the color callbacks always read current state regardless of which
 // one of those triggered the refresh.
+//
+// Reads the time window directly from the DOM (fbd-fs-window) rather
+// than requiring it as a parameter — this function is called from
+// three places (threshold change, target selection, chart render), and
+// only the last of those already has filters.window on hand; reading
+// it here once keeps all three consistent without threading it through
+// every call site.
+//
+// ALSO reads the fullscreen chart's own current axis bounds
+// (chartInstances.fbduration_fs.scales) and applies them as an
+// additional constraint — only a session currently visible within the
+// chart's own zoomed/panned viewport can count as a match, exactly the
+// same rule the FB/Duration range sliders already enforce, so pinch-
+// zoom/pan and dragging a slider produce the identical match set for
+// the identical visible range, not two different rules that happen to
+// look similar. This is what makes Option B (live-updating matches
+// during an active pinch/pan gesture, not just after it settles) work
+// at all — the trackpad/touch handlers call this on every tick, before
+// their own chart.update('none'), so by the time that repaint happens
+// the color callbacks are already reading match state for wherever the
+// viewport currently is, not wherever it was a frame ago.
 function _refreshWorkbenchMatchState(hist) {
-  const validForMatching = hist.filter(w => w.fb != null && !isNaN(parseFloat(w.fb)) && w.duration_sec != null && w.date);
+  const windowVal = document.getElementById('fbd-fs-window')?.value || 'all';
+  const cutoff = (!windowVal || windowVal === 'all') ? null : new Date(Date.now() - parseInt(windowVal) * 24 * 60 * 60 * 1000);
+  const fsChart = chartInstances.fbduration_fs;
+  const xScale = fsChart?.scales?.x, yScale = fsChart?.scales?.y;
+  const validForMatching = hist
+    .filter(w => w.fb != null && !isNaN(parseFloat(w.fb)) && w.duration_sec != null && w.date)
+    .filter(w => !cutoff || new Date(w.date) >= cutoff)
+    .filter(w => {
+      if (!xScale || !yScale) return true; // chart not built yet (e.g. very first call) — no viewport to constrain against
+      const durMin = parseFloat(w.duration_sec) / 60;
+      const fb = parseFloat(w.fb);
+      return durMin >= xScale.min && durMin <= xScale.max && fb >= yScale.min && fb <= yScale.max;
+    });
   window._fbdMatchCounts = getSessionMatchCountMap(validForMatching);
   window._fbdTargetMatchDates = null;
   if (window._workbenchTarget) {
@@ -829,6 +862,14 @@ function renderFbDurationChart(canvasId, filters) {
     // would let through but parseFloat can't use), rather than relying
     // on fb's own truthiness.
     .filter(w => w.fb != null && !isNaN(parseFloat(w.fb)) && w.duration_sec)
+    // Sessions outside the selected time window are excluded from the
+    // chart entirely, same as the FB/Duration range filters below — a
+    // session outside "Last month" doesn't render as a dot at all, not
+    // just an unhighlighted one. Matching (_refreshWorkbenchMatchState)
+    // applies this same cutoff independently on top of it, since a
+    // session can be visible here (this window is only ever this wide
+    // or wider) while still failing to qualify as a match for reasons
+    // beyond just the time window.
     .filter(w => !cutoff || new Date(w.date) >= cutoff)
     .map(w => {
       const cv = getSessionCVEndurance(w);
@@ -863,14 +904,6 @@ function renderFbDurationChart(canvasId, filters) {
     return d > max ? d : max;
   }, localDateStr(new Date(points[0].entry.date))) : null;
   const wbLatestDayPoints = wbLatestDay ? points.filter(p => localDateStr(new Date(p.entry.date)) === wbLatestDay) : [];
-
-  // Workbench match-status — see _refreshWorkbenchMatchState for why
-  // this is window-cached rather than a local variable computed here:
-  // selecting a target only needs a lightweight chart .update() (a full
-  // rebuild would wipe the selection that update is meant to show), so
-  // the color callbacks below must read live, independently-refreshable
-  // state rather than a value frozen at the last full render.
-  if (isFullscreen) _refreshWorkbenchMatchState(hist);
 
   const isDark = document.body.classList.contains('dark');
   const gc = isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)';
@@ -1140,6 +1173,21 @@ function renderFbDurationChart(canvasId, filters) {
 
   chartInstances[instKey] = new Chart(canvas, cfg);
   if (isFullscreen) {
+    // Workbench match-status — see _refreshWorkbenchMatchState for why
+    // this is window-cached rather than a local variable computed here:
+    // selecting a target only needs a lightweight chart .update() (a
+    // full rebuild would wipe the selection that update is meant to
+    // show), so the color callbacks must read live, independently-
+    // refreshable state rather than a value frozen at the last full
+    // render. Called here, after construction, not before it — it now
+    // reads this chart's own current axis bounds
+    // (chartInstances.fbduration_fs.scales) to constrain which sessions
+    // can count as a match to only what's actually visible in the
+    // viewport, and that chart doesn't exist yet until this line runs.
+    // The default-selection block just below calls chart.update() of
+    // its own accord, which is what actually paints this fresh state —
+    // no separate update needed here.
+    _refreshWorkbenchMatchState(hist);
     window._fbdCurrentPoints = points; // reused by the zone-compliance card update, not re-filtered separately
     // Default selection — every session from the most recent TRAINING
     // DAY, not just a single most-recent session: a training day can
@@ -1224,6 +1272,20 @@ function _fbDurationWireTrackpadPan(canvas, instKey) {
     }
     chart.update('none');
     _fbDurationSyncSlidersFromChart(chart);
+    // Option A, not live/continuous: match state only recomputes once
+    // the gesture actually settles, not on every wheel tick — wheel
+    // events fire many times a second during a trackpad gesture, and
+    // recomputing match sets on each one would be wasted work for
+    // something the user can't even perceive mid-motion, plus real risk
+    // of the axis clamp fighting for CPU with a still-scrolling wheel.
+    // Wheel has no native "gesture ended" event, so this debounces:
+    // each tick resets the timer, and only the FIRST tick after 200ms of
+    // silence actually fires the refresh.
+    clearTimeout(canvas._fbdWheelSettleTimer);
+    canvas._fbdWheelSettleTimer = setTimeout(() => {
+      _refreshWorkbenchMatchState(getHistory());
+      chart.update('none');
+    }, 200);
   }, { passive: false });
 }
 
@@ -1328,6 +1390,13 @@ function _fbDurationWireTouchGestures(canvas, instKey) {
     const chart = chartInstances[instKey];
     if (chart && touchState && (touchState.mode === 'pinch' || touchState.mode === 'pan')) {
       _fbDurationSyncSlidersFromChart(chart);
+      // Option A, not live/continuous: match state recomputes once the
+      // gesture actually ends, not on every touchmove tick — same
+      // reasoning as the wheel handler's debounce, touch just already
+      // has a real "gesture ended" event to hook instead of needing one
+      // simulated via a timer.
+      _refreshWorkbenchMatchState(getHistory());
+      chart.update('none');
     }
     touchState = null;
   };
@@ -1361,7 +1430,7 @@ function openFbDurationFullscreen() {
   // once a point on the scatter plot has actually been tapped.
   wrap.innerHTML = `
     <div style="padding:14px 20px 0;">
-      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.controls.title') || 'Gate Thresholds (FB Gap | Duration % | Work/Rep % | Mech %)'}</div>
+      <div style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${t('workbench.controls.title') || 'Gate Thresholds'}</div>
       <div id="workbench-controls"></div>
     </div>
     <div style="margin:18px 20px 0;padding-top:16px;border-top:1px solid var(--glass-border);">
