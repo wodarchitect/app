@@ -665,6 +665,18 @@ function toggleTimerWod() {
 ════════════════════════════════════════════════════ */
 function softResetCurrentWorkout() {
   if (!confirm('Reset current workout? Your Profile and History will be kept.')) return;
+  // Wrapped in requestAnimationFrame — confirm() is a blocking native
+  // dialog, and on some mobile/PWA browsers the page doesn't reliably
+  // repaint immediately after it closes, even though the DOM updates
+  // below run and complete correctly (confirmed: .wod-block count and
+  // #block-list's actual content were both verified correct via
+  // console logging the whole way through — the underlying state was
+  // never wrong, only the visual paint lagged behind it until something
+  // else, like a tab switch, forced a fresh repaint). Scheduling this
+  // work for the next animation frame gives the browser a genuine new
+  // paint cycle to work from, rather than asking it to repaint
+  // synchronously in the same tick the dialog just closed in.
+  requestAnimationFrame(() => {
   _activeTemplateName = '';
   if (timerItv?.cancel) timerItv.cancel(); else clearInterval(timerItv);
   releaseWakeLock();
@@ -690,9 +702,7 @@ function softResetCurrentWorkout() {
   // Reset start button
   // startPauseBtn removed — overlay handles state
   // Clear builder blocks, blueprint, and analytics results
-  console.log('[reset debug] .wod-block count BEFORE clearing #timeline:', document.querySelectorAll('.wod-block').length);
   document.getElementById('timeline').innerHTML = '';
-  console.log('[reset debug] .wod-block count AFTER clearing #timeline:', document.querySelectorAll('.wod-block').length);
   document.getElementById('blueprintDisplay').innerHTML = `<span style="color:var(--label);font-size:.8rem;">${t('builder.add.overview')}</span>`;
   const tdRowReset = document.getElementById('builder-td-row');
   if (tdRowReset) tdRowReset.style.display = 'none';
@@ -720,8 +730,7 @@ function softResetCurrentWorkout() {
   // Brief visual confirmation
   const rb = document.getElementById('reset-btn');
   rb.innerText = '✓ Reset'; setTimeout(() => { rb.innerText = '⟳ Reset'; }, 1200);
-  console.log('[reset debug] softResetCurrentWorkout() FINISHED — #block-list final state:', document.getElementById('block-list')?.children.length, 'child element(s), .wod-block count:', document.querySelectorAll('.wod-block').length);
-  setTimeout(() => console.log('[reset debug] 500ms AFTER reset finished — #block-list:', document.getElementById('block-list')?.children.length, 'child element(s), .wod-block count:', document.querySelectorAll('.wod-block').length), 500);
+  });
 }
 
 function fullInitialReset() {
@@ -1745,7 +1754,6 @@ function attachMovementListDrag(list, blockId) {
 /* ── Block list renderer ── */
 function renderBlockList() {
   const blocks = document.querySelectorAll('.wod-block');
-  console.log('[reset debug] renderBlockList() called — .wod-block count:', blocks.length, '— #block-list currently shows:', document.getElementById('block-list')?.children.length, 'child element(s)');
   const list = document.getElementById('block-list');
   if (!list) return;
   // Show FAB only when builder tab is active and template panel is not open
@@ -1772,10 +1780,8 @@ function renderBlockList() {
       <div style="font-size:.9rem;font-weight:800;color:var(--text);margin-bottom:6px;">${t('empty.builder')}</div>
       <div style="font-size:.74rem;color:var(--label);line-height:1.6;max-width:240px;margin:0 auto;">${t('empty.builder.sub')}</div>
     </div>`;
-    console.log('[reset debug] renderBlockList() reached the empty-state branch — #block-list now shows:', list.children.length, 'child element(s)');
     return;
   }
-  console.log('[reset debug] renderBlockList() took the NON-empty branch despite blocks.length =', blocks.length);
   list.innerHTML = '';
   // Show rest accordion only when 2+ blocks
   const restSection = document.getElementById('rest-between-blocks-section');
