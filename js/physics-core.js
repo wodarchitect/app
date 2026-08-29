@@ -85,8 +85,32 @@ function _buildBlockSegments(blockIdx, blockStartMs, blockEndMs) {
 
 // Builds the full per-block segment array for the whole session, for
 // saving. Call at save time, after the last block's window has closed.
-function _buildAllBlockSegments() {
-  return (window._blockTimeWindows || []).map(w => _buildBlockSegments(w.blockIdx, w.startMs, w.endMs));
+// expectedDurationsByBlock: optional, array indexed by blockIdx of each
+// block's actual result-time duration (blockTimeList in the live-flow
+// caller). When provided, guards against window._blockTimeWindows
+// belonging to a DIFFERENT, previously-run live session (e.g. the user
+// loaded an old session into the Builder to recalculate it) rather than
+// the one currently being calculated — a block's window is only
+// trusted if its own duration is close to the expected one; on a
+// mismatch, that block falls back to the same whole-block manual_rpe
+// shape _buildBlockSegments itself already returns when there's no
+// usable window at all, rather than trusting stale/unrelated data.
+// Omitted by the save-time callers (history.js, supabase-sync.js),
+// which run immediately after the session that produced
+// window._blockTimeWindows and don't have this staleness risk.
+function _buildAllBlockSegments(expectedDurationsByBlock) {
+  return (window._blockTimeWindows || []).map(w => {
+    if (expectedDurationsByBlock) {
+      const expected = expectedDurationsByBlock[w.blockIdx];
+      const actualDurationSec = (w.endMs - w.startMs) / 1000;
+      if (expected != null && Math.abs(actualDurationSec - expected) > 5) {
+        const rpeEl = document.getElementById('result-rpe-slider-' + w.blockIdx);
+        const rpe = rpeEl ? parseFloat(rpeEl.value) : null;
+        return [{ type: 'block', source: 'manual_rpe', rpe: rpe || null, durationSec: expected }];
+      }
+    }
+    return _buildBlockSegments(w.blockIdx, w.startMs, w.endMs);
+  });
 }
 
 // Real, live-recorded cardio toggle duration per (block, movement type) —
@@ -174,23 +198,6 @@ function _buildRestSegments() {
   });
 }
 
-// Finds this block's real time window, guarding against stale data —
-// window._blockTimeWindows could belong to a DIFFERENT, previously-run
-// live session (e.g. if the user loaded an old session into the Builder
-// to recalculate it, per this morning's AMRAP Metabolic test) rather
-// than the one currently being calculated. Only trusted if its own
-// duration is close to this block's actual duration (blockTimeList[idx],
-// already computed from the real result time) — a real match, not a
-// coincidence of array position.
-function _getBlockWindow(blockIdx, expectedDurationSec) {
-  if (!window._blockTimeWindows) return null;
-  const win = window._blockTimeWindows.find(w => w.blockIdx === blockIdx);
-  if (!win) return null;
-  const winDurationSec = (win.endMs - win.startMs) / 1000;
-  if (Math.abs(winDurationSec - expectedDurationSec) > 5) return null; // mismatch — stale/unrelated data, don't trust it
-  return win;
-}
-
 // ══ Step 2: segment-aware overhead + Cardiovascular Endurance ══
 // Converts a block's segments (real per-movement HR where captured, or
 // the single manual-RPE fallback) into the two block-level numbers the
@@ -239,8 +246,10 @@ function _computeBlockOverheadAndCV(segments, blockMechKcal, blockCardioKcalTota
   // real HR exists anywhere in the block, _buildBlockSegments collapses
   // everything into ONE segment spanning the FULL, un-reduced block
   // duration (type:'block', source:'manual_rpe') — same shape as the
-  // inline fallback in calculateGlobalPhysics when _getBlockWindow finds
-  // no window at all. That single segment's RPE-based estimate already
+  // inline fallback in calculateGlobalPhysics when no window exists or
+  // its duration doesn't match the block's actual result time (guarding
+  // against window._blockTimeWindows belonging to a different,
+  // previously-loaded session). That single segment's RPE-based estimate already
   // implicitly represents the whole block's effort, run included —
   // starting cv at blockCardioKcalTotal on top of it added the run's
   // kcal a second time. Confirmed by comparing against
@@ -1570,6 +1579,23 @@ function calculateGlobalPhysics() {
     // separate branch is needed here.
     const hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
     const hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
+    // Frozen here, before this loop uses it, rather than computed fresh
+    // per-block via _getBlockWindow+_buildBlockSegments as before — that
+    // was a second, independent segment-building path from the one the
+    // Segmented Breakdown card uses (window._lastBlockSegments), and the
+    // two could genuinely disagree: _getBlockWindow rejects a block's
+    // window outright if its duration differs from the result time by
+    // more than 5 seconds ("stale/unrelated data, don't trust it"),
+    // silently falling back to whole-block RPE for Overall Efficiency
+    // even when real per-segment HR data existed — confirmed happening
+    // in practice, from the pre-fix finishCurrentBlock() timing bug that
+    // could put ~12s between a block's segment window and its result
+    // time, well past that 5s tolerance. Unifying to one frozen snapshot
+    // here means Overall Efficiency and the Segmented Breakdown can no
+    // longer read genuinely different segment data for the same
+    // session — same reasoning as freezing avgHR/blockSegments at
+    // Calculate time already established just below.
+    window._lastBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments(blockTimeList) : null;
     for (let idx = 0; idx < blockRpeList.length; idx++) {
       const blockTimeSec = blockTimeList[idx] || 0;
       if (blockTimeSec <= 0) { blockOverheadList[idx] = 0; blockTotalMetEstimateList[idx] = 0; continue; }
@@ -1577,9 +1603,8 @@ function calculateGlobalPhysics() {
       const blockCardioKcal = (liveCardioByBlock.runByBlock[idx] || 0) + (liveCardioByBlock.rowByBlock[idx] || 0)
         + Object.values(cardioResult.byBlock[idx] || {}).reduce((a, b) => a + b, 0); // du/ski — previously missing from this subtraction entirely
 
-      const win = _getBlockWindow(idx, blockTimeSec);
-      const segments = win
-        ? _buildBlockSegments(idx, win.startMs, win.endMs)
+      const segments = (window._lastBlockSegments && window._lastBlockSegments[idx] && window._lastBlockSegments[idx].length)
+        ? window._lastBlockSegments[idx]
         : [{ type: 'block', source: 'manual_rpe', rpe: blockRpeList[idx] || null, durationSec: blockTimeSec }];
 
       const { overhead, cv } = _computeBlockOverheadAndCV(
@@ -1805,17 +1830,6 @@ function calculateGlobalPhysics() {
   // later, rather than always using whatever bodyweight is on the profile *now*.
   window._lastDurationSec = tas;
   window._lastBodyweight = bw;
-  // Block segments frozen here too, same reasoning and same precedent as
-  // _lastSessionHR below — _buildAllBlockSegments() reads live HR
-  // samples, and any that stream in between Calculate and Save (even
-  // during a brief cool-down) would otherwise make the save-time call
-  // in history.js produce different segment data than what Calculate
-  // already showed here, silently shifting Overall/Work/Running/DU
-  // Efficiency and the segmented MET-minutes between what was displayed
-  // live and what got saved. The original HR-freeze fix only covered
-  // avgHR/maxHR — blockSegments didn't exist as a concept yet when that
-  // fix was made, so it was never brought under the same protection.
-  window._lastBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments() : null;
   // Relative Loading — always show, 0% if no 1RM matched. Value now
   // lives in the Session Data card's RL column (bold hero number, plain
   // white/text-colored to match HR and MC's hero numbers there) rather
@@ -1952,10 +1966,23 @@ function calculateGlobalPhysics() {
           duration_sec: window._lastDurationSec,
           vo2max_used: window._lastVo2max,
           blocks: serializeBlocksForTemplate(),
-          blockSegments: window._lastBlockSegments
+          blockSegments: window._lastBlockSegments,
+          // Needed specifically for getSegmentedEfficiency's residual
+          // fallback (workEff derived from session-total MET-minutes
+          // minus running/DU) — that path calls getSessionCVEndurance
+          // on this same preview entry, and reconstructBlockOverheadList
+          // (its own RPE-based reconstruction) bails out to null
+          // immediately whenever both blockRpe and rpe are missing,
+          // regardless of whether vo2max/bw are fine. Without these two
+          // fields, the fallback silently produced nothing even though
+          // Overall Efficiency's own live metMinutes (a completely
+          // different function, getLiveCVEndurance, which already has
+          // direct access to blockRpeList) computed successfully.
+          rpe: window._lastComputedRPE,
+          blockRpe: window._lastBlockRpeList
         };
         segmented = getSegmentedEfficiency(previewEntryForSegmented);
-      } catch (e) {}
+      } catch (e) { console.error('[segmented efficiency] getSegmentedEfficiency threw in live flow:', e); }
     }
     const breakdownWrap = document.getElementById('resSegmentedBreakdown-wrap');
     const workRow = document.getElementById('resWorkEff-row');
