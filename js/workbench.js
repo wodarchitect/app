@@ -382,11 +382,17 @@ function _selectWorkbenchTarget(entry) {
 // bi-directional matcher (past AND future sessions relative to the
 // target) so the line traces efficiency progression in both
 // directions, not just how the athlete got to this session. Recomputes
-// eRaw fresh via getEngineScoreERaw for every matched session rather
-// than reading the newly-added entry.eRaw field directly — that field
-// is only populated going forward from tonight, so recomputing is what
-// makes the timeline work across the athlete's full existing history,
-// not just sessions saved after this feature shipped.
+// eRaw fresh via getEngineScoreERaw/getSegmentedEfficiency for every
+// matched session rather than reading a saved field directly — that
+// keeps this working across the athlete's full existing history, not
+// just sessions saved after each of those features shipped.
+//
+// Shows BOTH Overall and Work Efficiency as two lines, not just one —
+// deliberately different from the eRaw Comparison table below, which
+// stays Work-Efficiency-only for a clean single-metric delta column.
+// This chart is the place to actually see whether they diverge for a
+// given matched session (real running/DU mixed in vs not), rather than
+// only ever comparing one view of it.
 function renderErawTimelineChart(targetEntry) {
   const canvas = document.getElementById('chart-eraw-timeline');
   const section = document.getElementById('workbench-timeline-section');
@@ -395,31 +401,45 @@ function renderErawTimelineChart(targetEntry) {
   if (chartInstances.erawTimeline) { try { chartInstances.erawTimeline.destroy(); } catch(e) {} }
 
   const hist = getHistory();
-  const { matches } = findAllSessionMatchesBidirectional(targetEntry, hist);
+  const { matches } = findAllSessionMatchesBidirectional(targetEntry, _getWorkbenchMatchCandidates(hist));
 
   if (!matches.length) {
     section.style.display = 'none';
     return;
   }
 
-  const targetResult = getEngineScoreERaw(targetEntry);
-  if (!targetResult) {
+  const targetOverall = getEngineScoreERaw(targetEntry);
+  const targetWork = getSegmentedEfficiency(targetEntry).workEff;
+  if (!targetOverall && targetWork == null) {
     section.style.display = '';
     if (targetEl) targetEl.textContent = t('workbench.timeline.no.target.eraw') || 'eRaw not computable for this session';
     canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
 
-  // Build one point per matched session (+ the target itself), each with
-  // its own recomputed eRaw — sessions where eRaw genuinely isn't
-  // computable (missing cardio data, etc.) are dropped rather than
-  // plotted as a fabricated zero.
+  // Build one point per matched session (+ the target itself). A
+  // session is kept on the X-axis if EITHER metric is computable for
+  // it — each line independently shows null (a gap, not a fabricated
+  // zero) for whichever metric isn't available on that specific
+  // session, rather than dropping the session from both lines just
+  // because one of the two couldn't be computed.
   const rows = matches.map(m => {
-    const r = getEngineScoreERaw(m.session);
-    if (!r) return null;
-    return { date: (m.session.date || '').slice(0, 10), eRaw: r.eRaw, label: m.session.label || 'Session', isTarget: false, direction: m.direction };
+    const overall = getEngineScoreERaw(m.session);
+    const work = getSegmentedEfficiency(m.session).workEff;
+    if (!overall && work == null) return null;
+    return {
+      date: (m.session.date || '').slice(0, 10),
+      overallEraw: overall ? overall.eRaw : null,
+      workEraw: work,
+      label: m.session.label || 'Session', isTarget: false, direction: m.direction
+    };
   }).filter(Boolean);
-  rows.push({ date: (targetEntry.date || '').slice(0, 10), eRaw: targetResult.eRaw, label: targetEntry.label || 'Session', isTarget: true, direction: 'target' });
+  rows.push({
+    date: (targetEntry.date || '').slice(0, 10),
+    overallEraw: targetOverall ? targetOverall.eRaw : null,
+    workEraw: targetWork,
+    label: targetEntry.label || 'Session', isTarget: true, direction: 'target'
+  });
   rows.sort((a, b) => new Date(a.date) - new Date(b.date));
 
   section.style.display = '';
@@ -433,17 +453,34 @@ function renderErawTimelineChart(targetEntry) {
     type: 'line',
     data: {
       labels: rows.map(r => r.date),
-      datasets: [{
-        data: rows.map(r => r.eRaw),
-        borderColor: '#FF6B35',
-        backgroundColor: rows.map(r => r.isTarget ? '#FFFFFF' : '#FF6B35'),
-        pointBorderColor: rows.map(r => r.isTarget ? '#FF6B35' : '#FF6B35'),
-        pointBorderWidth: rows.map(r => r.isTarget ? 3 : 1),
-        pointRadius: rows.map(r => r.isTarget ? 8 : 4),
-        pointStyle: rows.map(r => r.isTarget ? 'star' : 'circle'),
-        tension: 0.15,
-        fill: false
-      }]
+      datasets: [
+        {
+          label: t('workbench.timeline.overall') || 'Overall Efficiency',
+          data: rows.map(r => r.overallEraw),
+          borderColor: '#FF6B35',
+          backgroundColor: rows.map(r => r.isTarget ? '#FFFFFF' : '#FF6B35'),
+          pointBorderColor: '#FF6B35',
+          pointBorderWidth: rows.map(r => r.isTarget ? 3 : 1),
+          pointRadius: rows.map(r => r.isTarget ? 8 : 4),
+          pointStyle: rows.map(r => r.isTarget ? 'star' : 'circle'),
+          spanGaps: true, // a null (session where this metric isn't computable) shouldn't break the line into two disconnected segments
+          tension: 0.15,
+          fill: false
+        },
+        {
+          label: t('workbench.timeline.work') || 'Work Efficiency',
+          data: rows.map(r => r.workEraw),
+          borderColor: '#3EA0FF',
+          backgroundColor: rows.map(r => r.isTarget ? '#FFFFFF' : '#3EA0FF'),
+          pointBorderColor: '#3EA0FF',
+          pointBorderWidth: rows.map(r => r.isTarget ? 3 : 1),
+          pointRadius: rows.map(r => r.isTarget ? 8 : 4),
+          pointStyle: rows.map(r => r.isTarget ? 'star' : 'circle'),
+          spanGaps: true,
+          tension: 0.15,
+          fill: false
+        }
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -452,10 +489,13 @@ function renderErawTimelineChart(targetEntry) {
         y: { title: { display: true, text: 'eRaw (kJ / MET-min)', color: lc, font: { size: 10 } }, grid: { color: gc }, ticks: { color: lc } }
       },
       plugins: {
-        legend: { display: false },
+        legend: { display: true, labels: { color: lc, font: { size: 10 }, boxWidth: 12 } },
         tooltip: { callbacks: { label: ctx => {
           const r = rows[ctx.dataIndex];
-          return `${r.label}${r.isTarget ? ' (Target)' : ` (${r.direction})`}: eRaw=${r.eRaw.toFixed(3)}`;
+          const val = ctx.datasetIndex === 0 ? r.overallEraw : r.workEraw;
+          if (val == null) return null; // suppresses the tooltip line entirely for a gapped point, rather than showing "null"
+          const metricLabel = ctx.datasetIndex === 0 ? 'Overall' : 'Work';
+          return `${r.label}${r.isTarget ? ' (Target)' : ` (${r.direction})`}: ${metricLabel} eRaw=${val.toFixed(3)}`;
         } } }
       }
     }
@@ -475,11 +515,23 @@ function renderErawTimelineChart(targetEntry) {
 // from what actually decided a session counted as a match.
 //
 // Table 2 ("eRaw Comparison" — how efficient was the mechanical
-// output?): eRaw and its delta vs the target. The Workbench was built
-// specifically to compare mechanical eRaw — Running/DU eRaw and their
-// own match gates were tried here and then deliberately reverted; that
-// data still lives in the Running/DU Efficiency banners on the live
-// and History views, just not duplicated into this comparison.
+// output specifically?): Work Efficiency (segmented — mechanical work
+// over just the mechanical segment's own MET-minutes, not the whole
+// session's) and its delta vs the target. Deliberately Work Efficiency
+// here, not Overall Efficiency — the Workbench's own gates (Force Bias,
+// Duration, Work/Rep, Mechanical/Aerobic Share) are all about
+// mechanical/structural similarity, and Overall Efficiency's
+// denominator can include real running/DU MET-minutes when present,
+// which would compare two "structurally similar" sessions on a number
+// partly determined by how much unrelated cardio happened to be mixed
+// in. Work Efficiency isolates the one thing this table actually exists
+// to compare. Running/DU eRaw and their own match gates were tried here
+// too and deliberately reverted; that data still lives in the Running/
+// DU Efficiency banners on the live and History views, just not
+// duplicated into this comparison. The Efficiency Progression chart
+// above shows both Overall and Work Efficiency side by side instead —
+// this table stays single-metric on purpose, for a clean, unambiguous
+// delta column.
 //
 // Table 3 ("Additional Physical Context" — the raw physical numbers
 // eRaw itself is built from): mechanical work, cardio strain, average
@@ -492,9 +544,9 @@ function renderWorkbenchMatchTable(targetEntry) {
   if (!container) return;
 
   const hist = getHistory();
-  const { matches } = findAllSessionMatchesBidirectional(targetEntry, hist);
-  const targetResult = getEngineScoreERaw(targetEntry);
-  const targetEraw = targetResult ? targetResult.eRaw : null;
+  const { matches } = findAllSessionMatchesBidirectional(targetEntry, _getWorkbenchMatchCandidates(hist));
+  const targetSegmented = getSegmentedEfficiency(targetEntry);
+  const targetEraw = targetSegmented.workEff;
 
   const fmtMinSec = (sec) => {
     const s = Math.round(sec || 0);
@@ -538,8 +590,8 @@ function renderWorkbenchMatchTable(targetEntry) {
 
   const buildERawRow = (row) => {
     const { entry, isTarget } = row;
-    const r = getEngineScoreERaw(entry);
-    const eRaw = r ? r.eRaw : null;
+    const s = getSegmentedEfficiency(entry);
+    const eRaw = s.workEff;
     const delta = (!isTarget && eRaw != null && targetEraw) ? ((eRaw - targetEraw) / targetEraw * 100) : null;
     return `<tr style="${isTarget ? 'background:var(--glass-inner);font-weight:700;' : ''}">
       <td style="padding:6px 8px;white-space:nowrap;">${isTarget ? '🎯 ' : ''}${entry.label || 'Session'}</td>
@@ -622,7 +674,7 @@ function renderWorkbenchMatchTable(targetEntry) {
             <tr style="border-bottom:1px solid var(--border);color:var(--label);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;">
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.session') || 'Session'}</th>
               <th style="padding:6px 8px;text-align:left;">${t('workbench.table.date') || 'Date'}</th>
-              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw.mech') || 'Overall Efficiency'}</th>
+              <th style="padding:6px 8px;text-align:right;">${t('workbench.table.eraw.mech') || 'Work Efficiency'}</th>
               <th style="padding:6px 8px;text-align:right;">${t('workbench.table.delta') || 'Δ vs Target'}</th>
             </tr>
           </thead>
@@ -803,12 +855,23 @@ function _fbdHexWithOpacity(hex, opacity) {
 // their own chart.update('none'), so by the time that repaint happens
 // the color callbacks are already reading match state for wherever the
 // viewport currently is, not wherever it was a frame ago.
-function _refreshWorkbenchMatchState(hist) {
+// Shared by every place in the Workbench that needs "which sessions are
+// eligible to be considered as a match right now" — the scatter chart's
+// dot coloring, the eRaw Progression timeline, the Comparable Sessions/
+// eRaw Comparison tables, and the Selected Target Summary card all need
+// the exact same candidate set, not four independent computations that
+// could silently disagree (confirmed happening in practice: the
+// timeline and summary card were still querying getHistory() directly,
+// so they showed matches the scatter chart's own viewport-constrained
+// coloring had already excluded — 3 matches in one place, only 1 dot
+// actually ringed in the other, for what should have been the same
+// question asked four different ways).
+function _getWorkbenchMatchCandidates(hist) {
   const windowVal = document.getElementById('fbd-fs-window')?.value || 'all';
   const cutoff = (!windowVal || windowVal === 'all') ? null : new Date(Date.now() - parseInt(windowVal) * 24 * 60 * 60 * 1000);
   const fsChart = chartInstances.fbduration_fs;
   const xScale = fsChart?.scales?.x, yScale = fsChart?.scales?.y;
-  const validForMatching = hist
+  return hist
     .filter(w => w.fb != null && !isNaN(parseFloat(w.fb)) && w.duration_sec != null && w.date)
     .filter(w => !cutoff || new Date(w.date) >= cutoff)
     .filter(w => {
@@ -817,6 +880,10 @@ function _refreshWorkbenchMatchState(hist) {
       const fb = parseFloat(w.fb);
       return durMin >= xScale.min && durMin <= xScale.max && fb >= yScale.min && fb <= yScale.max;
     });
+}
+
+function _refreshWorkbenchMatchState(hist) {
+  const validForMatching = _getWorkbenchMatchCandidates(hist);
   window._fbdMatchCounts = getSessionMatchCountMap(validForMatching);
   window._fbdTargetMatchDates = null;
   if (window._workbenchTarget) {
@@ -1812,7 +1879,7 @@ function _updateFbDurationInsightCard(point) {
   const matchEl = document.getElementById('fbd-insight-match');
   if (typeof findAllSessionMatchesBidirectional === 'function' && point.entry) {
     try {
-      const { matches } = findAllSessionMatchesBidirectional(point.entry, getHistory());
+      const { matches } = findAllSessionMatchesBidirectional(point.entry, _getWorkbenchMatchCandidates(getHistory()));
       const n = matches ? matches.length : 0;
       matchEl.textContent = n > 0
         ? `${n} ${n === 1 ? (t('chart.fbduration.match.one') || 'comparable session found') : (t('chart.fbduration.match.many') || 'comparable sessions found')}`
