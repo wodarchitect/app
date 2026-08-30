@@ -153,6 +153,7 @@ function parseResultFromDetail(detail, blockIndex) {
 function reconstructMechanicalWork(entry, bw, hMetres) {
   let totalWorkKJ = 0, totalTonnage = 0, loadedWorkKJ = 0, unloadedWorkKJ = 0, totalMechCostKJ = 0, totalReps = 0;
   const mechCostByBlock = {}; // per-block mechCostKJ — Phase 2's historical overhead reconstruction needs this alongside the existing session-wide totalMechCostKJ
+  const workByMovement = {}; // { movementName: { workKJ, reps } } — aggregated by name across every block in the session, not per-block, since the same movement can appear in more than one block and callers want one number per movement for the whole session
   (entry.blocks || []).forEach((block, blockIndex) => {
     const mode = block.mode || 'fortime';
     let r = parseFloat(block.result?.r) || 0;
@@ -230,6 +231,10 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
       totalWorkKJ += work;
       totalMechCostKJ += mechCost;
       mechCostByBlock[blockIndex] = (mechCostByBlock[blockIndex] || 0) + mechCost;
+      const mvName = mv.name || 'Unknown';
+      if (!workByMovement[mvName]) workByMovement[mvName] = { workKJ: 0, reps: 0 };
+      workByMovement[mvName].workKJ += work;
+      workByMovement[mvName].reps += reps;
       totalTonnage += wt * reps;
       if (reps > 0) totalReps += reps;
       if (wt > 0) { loadedWorkKJ += work; } else { unloadedWorkKJ += work; }
@@ -247,7 +252,7 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
   totalMechCostKJ += cardioBreakdown.metabolicCarveKJ;
   const cardioCarvedKcal = (cardioBreakdown.metabolicCarveKJ / 4.184) / 0.22;
 
-  return { workKJ: totalWorkKJ, tonnage: totalTonnage, loadedWorkKJ, unloadedWorkKJ, mechCostKJ: totalMechCostKJ, totalReps, mechCostByBlock, cardioCarvedKcal };
+  return { workKJ: totalWorkKJ, tonnage: totalTonnage, loadedWorkKJ, unloadedWorkKJ, mechCostKJ: totalMechCostKJ, totalReps, mechCostByBlock, cardioCarvedKcal, workByMovement };
 }
 
 // ══ eRaw modality classification (Session Coverage Workbench) ══
