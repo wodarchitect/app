@@ -753,14 +753,25 @@ function _renderInsightResult(cache, hist) {
       <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:3px;">${t('insight.recovery')}</div>
       <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${cache.recovery}</div>
     </div>
-    <div style="border-top:0.5px solid var(--glass-border);padding-top:10px;">
-      <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:6px;">${t('insight.recs')}</div>
-      ${(cache.recommendations||[]).filter(r => r && r.type === 'new').map(r => `
-        <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start;">
-          <span style="color:var(--brand);font-weight:900;flex-shrink:0;">→</span>
-          <span style="font-size:.76rem;color:var(--text);line-height:1.5;">${r.text}</span>
-        </div>`).join('')}
-    </div>
+    ${(() => {
+      // Only "new" recommendations that DIDN'T become a tracked card —
+      // one that did is now shown once, as a card, below. Re-validates
+      // each item's structuredTarget the same way _processInsightRecommendations
+      // did when the response first came in, rather than trusting a
+      // separate "did this become a card" flag that could drift out of
+      // sync with what actually happened — this is the same check, run
+      // again, so the two can't disagree.
+      const untracked = (cache.recommendations||[]).filter(r => r && r.type === 'new' && !_validateStructuredTarget(r.structuredTarget));
+      if (!untracked.length) return '';
+      return `<div style="border-top:0.5px solid var(--glass-border);padding-top:10px;">
+        <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:6px;">${t('insight.recs')}</div>
+        ${untracked.map(r => `
+          <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start;">
+            <span style="color:var(--brand);font-weight:900;flex-shrink:0;">→</span>
+            <span style="font-size:.76rem;color:var(--text);line-height:1.5;">${r.text}</span>
+          </div>`).join('')}
+      </div>`;
+    })()}
     ${_renderActionCardsSection()}
     ${refreshBtn ? `<div style="text-align:center;border-top:0.5px solid var(--glass-border);padding-top:10px;margin-top:4px;">${refreshBtn}</div>` : ''}`;
 
