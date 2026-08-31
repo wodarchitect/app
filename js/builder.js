@@ -1301,6 +1301,21 @@ function renderAnalyticsResults() {
     });
   }
 
+  // Same capture, same reasoning, for manual Avg/Max HR — this rebuild
+  // wipes and recreates the whole accordion including these inputs, so
+  // without capturing their values first, anything typed in would be
+  // silently lost on the next ordinary tab switch, same bug the RPE
+  // capture above already exists to prevent.
+  const existingManualHrEls = container.querySelectorAll('[id^="result-manualhr-avg-"]');
+  if (existingManualHrEls.length) {
+    window._savedAnalyticsManualHr = {};
+    existingManualHrEls.forEach(el => {
+      const idx = el.id.replace('result-manualhr-avg-', '');
+      const maxEl = container.querySelector('#result-manualhr-max-' + idx);
+      window._savedAnalyticsManualHr[idx] = { avg: el.value || null, max: maxEl?.value || null };
+    });
+  }
+
   // Preserve open state across re-renders
   const wasOpen = document.getElementById('analytics_results_acc')?.classList.contains('open');
 
@@ -1542,7 +1557,49 @@ function renderAnalyticsResults() {
         <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span>
       </div>`;
     blockWrap.appendChild(rpeWrapBlock);
+    // Manual Avg/Max HR — for a session logged without the phone
+    // present (e.g. a run tracked on a standalone watch/strap), where
+    // no live samples exist for the app to compute real per-segment
+    // intensity from. Only shown when window._hrSamples is genuinely
+    // empty — if the timer WAS run with a strap connected, real,
+    // per-second data already exists and is strictly more accurate
+    // than anything typed in after the fact; showing a manual override
+    // alongside real data would create exactly the "which one wins"
+    // ambiguity this condition exists to avoid. Checked once per block
+    // render since _hrSamples is session-wide, not per-block — a
+    // session with real HR data has it for every block, not some.
+    const showManualHr = !window._hrSamples || window._hrSamples.length === 0;
+    if (showManualHr) {
+      const manualHrWrap = document.createElement('div');
+      manualHrWrap.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
+      manualHrWrap.innerHTML = `
+        <div style="font-size:.68rem;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('result.manualhr.title') || 'Avg / Max HR (optional)'}</div>
+        <div style="font-size:.66rem;color:var(--label);margin-bottom:8px;line-height:1.4;">${t('result.manualhr.sub') || 'From a watch or strap tracked separately — only if the app captured no live HR for this session.'}</div>
+        <div style="display:flex;gap:8px;">
+          <input type="number" id="result-manualhr-avg-${i}" placeholder="${t('result.manualhr.avg') || 'Avg HR'}" min="0" max="250" style="flex:1;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.8rem;font-family:inherit;">
+          <input type="number" id="result-manualhr-max-${i}" placeholder="${t('result.manualhr.max') || 'Max HR'}" min="0" max="250" style="flex:1;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.8rem;font-family:inherit;">
+        </div>`;
+      blockWrap.appendChild(manualHrWrap);
+    }
+
     body.appendChild(blockWrap);
+
+    // Restore this block's manual HR entries across a rebuild, same
+    // reasoning and same bug this already fixed for per-block RPE just
+    // below — this MUST run after body.appendChild(blockWrap) above,
+    // not before: document.getElementById only finds elements actually
+    // attached to the live document, and the manual HR inputs were
+    // still inside a detached node until that append — looking them up
+    // any earlier silently finds nothing and this restore becomes a
+    // permanent no-op, exactly the bug the RPE restore below already
+    // hit and fixed once.
+    if (showManualHr && window._savedAnalyticsManualHr && window._savedAnalyticsManualHr[i]) {
+      const saved = window._savedAnalyticsManualHr[i];
+      const avgEl = document.getElementById('result-manualhr-avg-' + i);
+      const maxEl = document.getElementById('result-manualhr-max-' + i);
+      if (avgEl && saved.avg != null) avgEl.value = saved.avg;
+      if (maxEl && saved.max != null) maxEl.value = saved.max;
+    }
 
     // Restore this block's RPE value/touched-state captured before this
     // rebuild wiped it — see the capture near the top of this function.

@@ -176,6 +176,36 @@ function _fmtCardioPace(cardioType, totalUnits, secs) {
   return '';
 }
 
+// Manual Avg/Max HR — for a session logged without the phone present
+// (watch/strap tracked separately, entered by hand in the Analytics
+// results accordion). Reads whatever per-block manual entries exist
+// (result-manualhr-avg-N/result-manualhr-max-N), and rolls them up
+// into ONE session-wide {avg, max} in the same shape _hrStatsForRange
+// returns, so callers can use it as a drop-in fallback without caring
+// which source the number came from. avg is duration-weighted across
+// blocks (a 2-minute warm-up block shouldn't count equally against a
+// 20-minute main block); max is the highest single block's max,
+// matching how a real max naturally works — the peak of the whole
+// session, not an average of per-block peaks. Blocks with no manual
+// entry (or duration 0) are skipped entirely rather than counted as
+// HR-0, which would silently drag the weighted average down.
+function _getManualSessionHR(blockTimeList) {
+  let weightedSum = 0, totalSec = 0, maxHR = 0, any = false;
+  (blockTimeList || []).forEach((durationSec, idx) => {
+    const avgEl = document.getElementById('result-manualhr-avg-' + idx);
+    const maxEl = document.getElementById('result-manualhr-max-' + idx);
+    const avg = parseFloat(avgEl?.value);
+    if (!avg || !durationSec) return;
+    any = true;
+    weightedSum += avg * durationSec;
+    totalSec += durationSec;
+    const max = parseFloat(maxEl?.value) || avg;
+    if (max > maxHR) maxHR = max;
+  });
+  if (!any || !totalSec) return null;
+  return { avg: Math.round(weightedSum / totalSec), max: Math.round(maxHR) };
+}
+
 // Rest periods as their own HR-derived segments, same treatment as any
 // mechanical segment — real average HR during the window, converted to
 // relIntensity via %HRR, no invented baseline MET. Only ever populated
@@ -1596,6 +1626,29 @@ function calculateGlobalPhysics() {
     // session — same reasoning as freezing avgHR/blockSegments at
     // Calculate time already established just below.
     window._lastBlockSegments = (typeof _buildAllBlockSegments === 'function') ? _buildAllBlockSegments(blockTimeList) : null;
+    // Manual per-block Avg/Max HR overrides — for a block with no real
+    // window._hrSamples at all (the fully-manual, no-phone scenario
+    // this was built for), _buildAllBlockSegments above has nothing to
+    // work with and either omits this block's entry entirely or falls
+    // back to the RPE-only shape. A manual entry, where present, always
+    // takes priority over whatever that produced — it's real HR data,
+    // strictly more accurate than an RPE guess, even though it's a
+    // single whole-block average rather than true per-segment
+    // resolution. Built as the same {type:'block', source:'hr_segment'}
+    // shape _computeBlockOverheadAndCV already knows how to read
+    // (source==='hr_segment' with a numeric avgHR triggers its real,
+    // Karvonen-based branch regardless of type) — no new evaluation
+    // logic needed, this just gives the existing machinery real data
+    // to work with instead of nothing.
+    if (!window._lastBlockSegments) window._lastBlockSegments = [];
+    (blockTimeList || []).forEach((durationSec, idx) => {
+      const avgEl = document.getElementById('result-manualhr-avg-' + idx);
+      const avg = parseFloat(avgEl?.value);
+      if (!avg || !durationSec) return;
+      const maxEl = document.getElementById('result-manualhr-max-' + idx);
+      const max = parseFloat(maxEl?.value) || avg;
+      window._lastBlockSegments[idx] = [{ type: 'block', source: 'hr_segment', avgHR: Math.round(avg), maxHR: Math.round(max), durationSec }];
+    });
     for (let idx = 0; idx < blockRpeList.length; idx++) {
       const blockTimeSec = blockTimeList[idx] || 0;
       if (blockTimeSec <= 0) { blockOverheadList[idx] = 0; blockTotalMetEstimateList[idx] = 0; continue; }
@@ -1690,7 +1743,12 @@ function calculateGlobalPhysics() {
       const _hrMaxEl = document.getElementById('resHRMax');
       const _hrAvgMaxLineEl = document.getElementById('resHRAvgMax-line');
       if (_hrAvgEl || _hrMaxEl) {
-        const _sessionHR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
+        // Falls back to the manual per-block entries, rolled up
+        // session-wide, whenever there's no real HR data to compute
+        // from — same "manual data only matters when real data is
+        // absent" rule as the blockSegments override above, just
+        // applied to the session-wide summary instead of per-block.
+        const _sessionHR = ((typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null) || _getManualSessionHR(blockTimeList);
         window._lastSessionHR = _sessionHR;
         if (_hrAvgEl) _hrAvgEl.innerText = _sessionHR ? _sessionHR.avg : '0';
         if (_hrMaxEl) _hrMaxEl.innerText = _sessionHR ? _sessionHR.max : '0';
