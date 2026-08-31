@@ -844,20 +844,27 @@ const CARD_CATEGORY_DISPLAY = {
 // stored to support this, only rendered differently.
 function _renderActionCardWeekGrid(card) {
   const now = new Date();
+  // box-sizing:border-box on every cell, added to the two states that
+  // have a border — confirmed root cause of the oversized "in progress"
+  // cell in testing: this app has no global box-sizing reset (it's set
+  // per-element wherever needed, not inherited), so a bordered cell's
+  // content-box default adds the border ON TOP of the specified 22px,
+  // and the box-shadow glow further exaggerated how much larger it
+  // looked next to the plain, borderless completed/missed cells.
   return `<div style="display:flex;gap:4px;">
     ${card.weeklyResults.map((w, i) => {
       if (w === true) {
-        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.completed') || 'Completed'}" style="width:22px;height:22px;border-radius:5px;background:#22C55E;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✓</div>`;
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.completed') || 'Completed'}" style="box-sizing:border-box;width:22px;height:22px;border-radius:5px;background:#22C55E;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✓</div>`;
       }
       if (w === false) {
-        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.missed') || 'Missed'}" style="width:22px;height:22px;border-radius:5px;background:#EF4444;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✕</div>`;
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.missed') || 'Missed'}" style="box-sizing:border-box;width:22px;height:22px;border-radius:5px;background:#EF4444;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✕</div>`;
       }
       const { start, end } = _getCardWeekRange(card, i);
       const isCurrent = now >= start && now < end;
       if (isCurrent) {
-        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.inprogress') || 'In progress'}" style="width:22px;height:22px;border-radius:5px;background:var(--glass-border);border:2px solid var(--brand);box-shadow:0 0 6px var(--brand);flex-shrink:0;"></div>`;
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.inprogress') || 'In progress'}" style="box-sizing:border-box;width:22px;height:22px;border-radius:5px;background:var(--glass-border);border:2px solid var(--brand);box-shadow:0 0 4px var(--brand);flex-shrink:0;"></div>`;
       }
-      return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.upcoming') || 'Upcoming'}" style="width:22px;height:22px;border-radius:5px;background:transparent;border:1.5px dashed var(--glass-border);opacity:.6;flex-shrink:0;"></div>`;
+      return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.upcoming') || 'Upcoming'}" style="box-sizing:border-box;width:22px;height:22px;border-radius:5px;background:transparent;border:1.5px dashed var(--glass-border);opacity:.6;flex-shrink:0;"></div>`;
     }).join('')}
   </div>`;
 }
