@@ -77,8 +77,30 @@ function getActionCards() {
 }
 
 function saveActionCards(cards) {
-  try { localStorage.setItem('wod-action-cards', JSON.stringify(cards)); return true; }
+  try {
+    localStorage.setItem('wod-action-cards', JSON.stringify(cards));
+    _syncActionCardsToCloud(cards);
+    return true;
+  }
   catch (e) { console.error('[action cards] save failed:', e); return false; }
+}
+
+// Fire-and-forget, not awaited — same pattern the existing
+// coaching_insight cloud push already uses (see generateCoachingInsight
+// below). Deliberately silent on failure beyond the console warning:
+// saveActionCards's own return value reflects whether the LOCAL write
+// succeeded, since that's the one the rest of the app depends on
+// synchronously — a cloud push failing (offline, no session) shouldn't
+// make local save/render logic behave as though nothing was saved at
+// all when the local copy is in fact fine.
+async function _syncActionCardsToCloud(cards) {
+  try {
+    const sb = getSB();
+    if (!sb) return;
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session?.user) return;
+    await sb.from('profiles').upsert({ id: session.user.id, action_cards: cards, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  } catch (e) { console.warn('[action cards] cloud sync failed:', e); }
 }
 
 // Deliberately NOT JSON.stringify comparison — key order isn't

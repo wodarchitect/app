@@ -540,6 +540,18 @@ async function sbStartupSync(uid) {
         if (ci.lang) localStorage.setItem('wod-insight-cache-' + ci.lang, JSON.stringify(ci));
         if (ci.lang === (_lang === 'es' ? 'es' : 'en')) _insightCache = ci;
       }
+      // Load action cards from cloud — cloud is source of truth here too,
+      // same rule as the rest of this profile fetch, and safe to apply
+      // even if the cloud copy has a slightly stale weeklyResults: this
+      // just writes what the cloud has to localStorage, and the next
+      // render calls refreshActionCardResults() regardless, which only
+      // ever fills in weeks still sitting at null — it never overwrites
+      // an already-locked-in true/false — so any week that's fully
+      // elapsed since the last push gets correctly evaluated locally
+      // right after this pull, using this device's own current history.
+      if (Array.isArray(prof.action_cards)) {
+        localStorage.setItem('wod-action-cards', JSON.stringify(prof.action_cards));
+      }
       console.log('[sync] Profile applied from cloud');
     }
   } catch(e) { console.warn('[sync] Profile fetch failed:', e); }
