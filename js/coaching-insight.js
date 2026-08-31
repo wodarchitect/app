@@ -111,11 +111,38 @@ function _newActionCardId() {
 // updated cards array — does not save it; the caller decides when to
 // persist, since this may be called several times in a row while
 // processing one insight response before a single save at the end.
-function upsertActionCard(cards, structuredTarget, proseText) {
+
+// Valid category values — same validate-don't-trust reasoning as
+// VALID_MOVEMENT_PATTERNS below: the prompt asking for one of these
+// four strings is not a guarantee one came back.
+const VALID_CARD_CATEGORIES = new Set(['PATTERN_IMBALANCE', 'GOAL_ALIGNMENT', 'LOAD_PERIODIZATION', 'RECOVERY']);
+
+// cardContent = { headline, diagnosticWhy, prescribedAction, category }
+// — replaces the old single proseText field entirely, not alongside
+// it, since the whole point of this split is to stop rendering one
+// dense paragraph. Headline is defensively truncated to 8 words here
+// (not just requested in the prompt) for the same reason every other
+// LLM-supplied constraint in this file is re-enforced in code rather
+// than trusted: a word-count instruction is a request, not a
+// guarantee. category falls back to 'PATTERN_IMBALANCE' if missing or
+// not one of the four known values, rather than leaving the card with
+// an unrenderable badge.
+function _sanitizeCardContent(cardContent) {
+  const headline = (cardContent.headline || '').trim().split(/\s+/).slice(0, 8).join(' ');
+  return {
+    headline,
+    diagnosticWhy: cardContent.diagnosticWhy || '',
+    prescribedAction: cardContent.prescribedAction || '',
+    category: VALID_CARD_CATEGORIES.has(cardContent.category) ? cardContent.category : 'PATTERN_IMBALANCE'
+  };
+}
+
+function upsertActionCard(cards, structuredTarget, cardContent) {
   const existing = findMatchingActionCard(cards, structuredTarget);
   const today = new Date().toISOString().slice(0, 10);
+  const content = _sanitizeCardContent(cardContent);
   if (existing) {
-    existing.proseText = proseText;
+    Object.assign(existing, content);
     existing.startDate = today;
     existing.weeklyResults = [null, null, null, null, null, null];
     return cards;
@@ -123,7 +150,7 @@ function upsertActionCard(cards, structuredTarget, proseText) {
   cards.push({
     id: _newActionCardId(),
     structuredTarget,
-    proseText,
+    ...content,
     startDate: today,
     weeklyResults: [null, null, null, null, null, null]
   });
@@ -261,7 +288,12 @@ function _processInsightRecommendations(recommendations) {
     if (r.type === 'new') {
       const validTarget = _validateStructuredTarget(r.structuredTarget);
       if (validTarget) {
-        cards = upsertActionCard(cards, validTarget, r.text || '');
+        cards = upsertActionCard(cards, validTarget, {
+          headline: r.headline,
+          diagnosticWhy: r.diagnosticWhy,
+          prescribedAction: r.prescribedAction,
+          category: r.category
+        });
       }
       // No structuredTarget (or an invalid one) — this recommendation
       // stays in the plain recommendations array for display, same as
@@ -572,18 +604,23 @@ RECOMMENDATION OUTPUT — how many, and what shape:
 Let N = the number of items currently in activeCards.
 - Output max(1, 3 - N) NEW recommendations (type "new"). This is always at least 1, even when N is already 3 or more.
 - Fill any remaining slots, up to 3 total items, with commentary on existing active cards (type "commentary") — one item per card, prioritizing cards that are underperforming. If there are fewer active cards than remaining slots, output fewer than 3 items total rather than inventing extra commentary or extra new recommendations to pad the count.
-- Every "new" item needs "text" (the recommendation, exactly as before). If — and only if — the recommendation is a specific, countable, weekly action, ALSO include "structuredTarget" using ONE of these two shapes:
+- Every "new" item needs exactly these four fields:
+  - "headline": a short, bold, actionable directive — 8 words maximum, imperative voice (e.g. "Add One Dedicated Pulling Session Weekly").
+  - "diagnosticWhy": exactly 2 sentences of data justification — grounded in the actual numbers provided (weeklyBreakdown, sessionTable, patternDistribution, etc.), never invented, same rule as everywhere else in this prompt.
+  - "prescribedAction": one short, concrete target string for display in a highlighted prescription pill (e.g. "Pull-ups, Rows, or C2B x2 sessions").
+  - "category": exactly one of "PATTERN_IMBALANCE", "GOAL_ALIGNMENT", "LOAD_PERIODIZATION", "RECOVERY" — never invent a different category string.
+  If — and only if — the recommendation is a specific, countable, weekly action, ALSO include "structuredTarget" using ONE of these two shapes:
   - {"type":"movement_pattern_count","pattern":"<one of: pattern.squat, pattern.hinge, pattern.push, pattern.pull, pattern.olympic, pattern.core, pattern.carry, pattern.handstand, pattern.monostructural>","target":<integer, sessions per week>}
   - {"type":"weekly_session_consistency","target":<integer, sessions per week>,"tolerance":<integer, allowed deviation either direction>}
   Omit "structuredTarget" entirely for a recommendation that doesn't cleanly fit one of these two shapes (e.g. a duration- or pace-qualified suggestion) — do not force it into a shape that misrepresents it. The "pattern" value must be exactly one of the strings listed above — never invent a new one.
-- Every "commentary" item needs "text" and "targetCardId" set to the exact "id" of the activeCards entry it's about — never a card id that doesn't appear in activeCards.
+- Every "commentary" item needs "text" (a short encouragement sentence, not a full paragraph) and "targetCardId" set to the exact "id" of the activeCards entry it's about — never a card id that doesn't appear in activeCards.
 
 Even when training is going well, always find ways to improve, optimize or progress further within whatever recommendation budget the rule above allows. A good coach never just praises — they identify the next challenge, the weak link, or the next level to pursue. New recommendations should be forward-looking and concrete, not generic.
 
 CRITICAL — do not state a specific number (a range, a minimum, a maximum, a single session's value) unless it appears literally in the data provided. If you want to describe a spread or pattern across multiple data points, either read the actual values from sessionTable or describe it qualitatively (e.g. "varied considerably") rather than inventing a specific number.
 
 Return this exact JSON structure, no markdown, no backticks, no other text:
-{"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":[{"type":"new","text":"specific forward-looking recommendation","structuredTarget":{"type":"movement_pattern_count","pattern":"pattern.pull","target":1}},{"type":"commentary","text":"encouragement referencing an existing active card","targetCardId":"the exact id from activeCards"}]}`;
+{"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":[{"type":"new","headline":"Short 8-word-max actionable directive","diagnosticWhy":"Exactly two sentences of data justification.","prescribedAction":"Concrete target for the prescription pill","category":"PATTERN_IMBALANCE","structuredTarget":{"type":"movement_pattern_count","pattern":"pattern.pull","target":1}},{"type":"commentary","text":"short encouragement referencing an existing active card","targetCardId":"the exact id from activeCards"}]}`;
 
     const userPrompt = `Athlete goal: ${goalLabel}
 Fitness level: ${payload.profile.fitnessLevel}
@@ -768,7 +805,10 @@ function _renderInsightResult(cache, hist) {
         ${untracked.map(r => `
           <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start;">
             <span style="color:var(--brand);font-weight:900;flex-shrink:0;">→</span>
-            <span style="font-size:.76rem;color:var(--text);line-height:1.5;">${r.text}</span>
+            <div>
+              <div style="font-size:.76rem;color:var(--text);font-weight:700;line-height:1.4;">${r.headline || ''}</div>
+              ${r.diagnosticWhy ? `<div style="font-size:.72rem;color:var(--label);line-height:1.4;margin-top:2px;">${r.diagnosticWhy}</div>` : ''}
+            </div>
           </div>`).join('')}
       </div>`;
     })()}
@@ -779,21 +819,45 @@ function _renderInsightResult(cache, hist) {
   if (chevron) chevron.style.transform = _insightExpanded ? 'rotate(180deg)' : '';
 }
 
-// Six small cells, one per week of a card's window — grey (not yet
-// evaluated: future or the current in-progress week), green with a
-// checkmark (met that week), or muted red (evaluated, not met). This
-// grid IS the status display for a card — deliberately no separate
-// "partial/met" badge layered on top of it, since "which weeks were
-// hit and which weren't" at a glance is exactly what was asked for,
-// and a card-level summary badge would just be restating the same six
-// cells in a vaguer form.
-function _renderActionCardWeekGrid(weeklyResults) {
+// Category display: icon + human label, keyed by the same enum
+// enforced in _sanitizeCardContent. Falls back to PATTERN_IMBALANCE's
+// entry if somehow given a value outside the known set, rather than
+// rendering an empty badge — belt-and-suspenders alongside the
+// sanitization that should already have caught this earlier.
+const CARD_CATEGORY_DISPLAY = {
+  PATTERN_IMBALANCE:  { icon: '🏋️', label: 'Imbalance' },
+  GOAL_ALIGNMENT:      { icon: '🎯', label: 'Goal' },
+  LOAD_PERIODIZATION:  { icon: '📊', label: 'Load' },
+  RECOVERY:            { icon: '🔋', label: 'Recovery' }
+};
+
+// Six cells, one per week of a card's window, now with FOUR distinct
+// states rather than three — COMPLETED and MISSED are unchanged
+// (weeklyResults[i] is locked in true/false by refreshActionCardResults
+// once a week has fully elapsed), but a week still sitting at null now
+// renders differently depending on WHY it's null: the current,
+// still-in-progress week (glowing border, distinct from a plain future
+// week) vs. a week that hasn't started yet (dimmed outline only). Both
+// of those were previously the same flat grey — this needed knowing
+// which week index "now" actually falls in, which _getCardWeekRange
+// already computes elsewhere in this file; nothing new had to be
+// stored to support this, only rendered differently.
+function _renderActionCardWeekGrid(card) {
+  const now = new Date();
   return `<div style="display:flex;gap:4px;">
-    ${weeklyResults.map((w, i) => {
-      const bg = w === true ? '#22C55E' : w === false ? '#EF4444' : 'var(--glass-border)';
-      const content = w === true ? '✓' : w === false ? '✕' : '';
-      const opacity = w === null ? '.5' : '1';
-      return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}" style="width:22px;height:22px;border-radius:5px;background:${bg};opacity:${opacity};display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">${content}</div>`;
+    ${card.weeklyResults.map((w, i) => {
+      if (w === true) {
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.completed') || 'Completed'}" style="width:22px;height:22px;border-radius:5px;background:#22C55E;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✓</div>`;
+      }
+      if (w === false) {
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.missed') || 'Missed'}" style="width:22px;height:22px;border-radius:5px;background:#EF4444;display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">✕</div>`;
+      }
+      const { start, end } = _getCardWeekRange(card, i);
+      const isCurrent = now >= start && now < end;
+      if (isCurrent) {
+        return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.inprogress') || 'In progress'}" style="width:22px;height:22px;border-radius:5px;background:var(--glass-border);border:2px solid var(--brand);box-shadow:0 0 6px var(--brand);flex-shrink:0;"></div>`;
+      }
+      return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}: ${t('insight.actioncards.upcoming') || 'Upcoming'}" style="width:22px;height:22px;border-radius:5px;background:transparent;border:1.5px dashed var(--glass-border);opacity:.6;flex-shrink:0;"></div>`;
     }).join('')}
   </div>`;
 }
@@ -811,11 +875,21 @@ function _renderActionCardsSection() {
 
   return `<div style="border-top:0.5px solid var(--glass-border);padding-top:10px;margin-top:2px;">
     <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:8px;">${t('insight.actioncards.title') || 'Action Cards'}</div>
-    ${cards.map(c => `
+    ${cards.map(c => {
+      const weeksElapsed = c.weeklyResults.filter(w => w !== null).length;
+      const catDisplay = CARD_CATEGORY_DISPLAY[c.category] || CARD_CATEGORY_DISPLAY.PATTERN_IMBALANCE;
+      return `
       <div style="margin-bottom:12px;padding:10px;border:0.5px solid var(--glass-border);border-radius:10px;">
-        <div style="font-size:.76rem;color:var(--text);line-height:1.5;margin-bottom:8px;">${c.proseText}</div>
-        ${_renderActionCardWeekGrid(c.weeklyResults)}
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:.65rem;font-weight:700;color:var(--label);">${catDisplay.icon} ${catDisplay.label}</span>
+          <span style="font-size:.6rem;font-weight:700;color:var(--brand);background:var(--glass-inner);padding:2px 8px;border-radius:10px;">${t('insight.actioncards.weekof') || 'Week'} ${Math.min(weeksElapsed + 1, 6)} ${t('insight.actioncards.of') || 'of'} 6</span>
+        </div>
+        <div style="font-size:.82rem;font-weight:800;color:var(--text);line-height:1.4;margin-bottom:4px;">${c.headline || ''}</div>
+        ${c.diagnosticWhy ? `<div style="font-size:.72rem;color:var(--label);line-height:1.5;margin-bottom:8px;">${c.diagnosticWhy}</div>` : ''}
+        ${c.prescribedAction ? `<div style="font-size:.72rem;color:var(--brand);background:var(--glass-inner);border-radius:8px;padding:6px 10px;margin-bottom:10px;">💡 ${t('insight.actioncards.target') || 'Target'}: ${c.prescribedAction}</div>` : ''}
+        ${_renderActionCardWeekGrid(c)}
         ${c.latestCommentary ? `<div style="font-size:.7rem;color:var(--label);font-style:italic;margin-top:8px;line-height:1.4;">${c.latestCommentary}</div>` : ''}
-      </div>`).join('')}
+      </div>`;
+    }).join('')}
   </div>`;
 }
