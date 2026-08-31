@@ -23,6 +23,265 @@ function _insightRefreshDue(cached, hist) {
 let _insightExpanded = localStorage.getItem('wod-insight-expanded') === 'true';
 let _insightCache = null; // { summary, goalAlignment, recovery, recommendations, generatedAt, sessionCount }
 
+// ══ Coach Action Cards ══
+// One card per tracked recommendation. Each card runs a fixed 6-week
+// window (always 6, regardless of what the recommendation's own prose
+// says about duration — settled design: simpler than letting the LLM
+// set a variable length per card, and avoids needing the LLM to output
+// a duration field at all).
+//
+// Card shape:
+//   {
+//     id: string — stable identity for this card, unrelated to its
+//       structuredTarget (which can change identity via a reset) or its
+//       array position. Generated once at creation, never reused.
+//     structuredTarget: { type, ...type-specific fields, target } —
+//       the machine-checkable definition of what this card tracks.
+//       THIS, not proseText, is what defines whether an incoming
+//       recommendation is "the same action" for matching/reset
+//       purposes — proseText is free text the LLM writes fresh every
+//       cycle and is expected to vary in wording even when the intent
+//       is identical.
+//     proseText: string — the latest human-readable recommendation
+//       text, shown on the card. Overwritten on reset with whatever
+//       the LLM wrote that cycle, even though structuredTarget stayed
+//       the same — the display text should reflect how the coach is
+//       currently phrasing it, not freeze at the original wording.
+//     startDate: ISO date string — when this card's CURRENT 6-week
+//       window began. A reset sets this to now, discarding the old
+//       window entirely rather than preserving a partial history with
+//       a gap in the middle (settled design).
+//     weeklyResults: array of 6 — boolean or null per week of the
+//       window. null = week hasn't happened yet (future) or hasn't
+//       been evaluated yet (current, in-progress week); true/false =
+//       an evaluated past week's pass/fail. Index 0 = the week
+//       starting at startDate.
+//   }
+//
+// Known structuredTarget.type values (extend this list as new types
+// are designed, rather than inventing ad-hoc shapes per card):
+//   'movement_pattern_count' — { pattern: one of getMovementPattern()'s
+//     keys (e.g. 'pattern.pull'), target: N } — met a week by including
+//     at least N sessions that week with >=1 movement of this pattern.
+//   'weekly_session_consistency' — { target: N, tolerance: N } — met a
+//     week if that week's total session count falls within
+//     [target-tolerance, target+tolerance].
+// (Only these two are designed so far — modality/duration-based targets
+// like "20-40min aerobic session" still need their own type before a
+// recommendation of that shape can become a trackable card; until then
+// it stays commentary-only prose with no progress grid.)
+
+function getActionCards() {
+  try { return JSON.parse(localStorage.getItem('wod-action-cards') || '[]'); }
+  catch (e) { return []; }
+}
+
+function saveActionCards(cards) {
+  try { localStorage.setItem('wod-action-cards', JSON.stringify(cards)); return true; }
+  catch (e) { console.error('[action cards] save failed:', e); return false; }
+}
+
+// Deliberately NOT JSON.stringify comparison — key order isn't
+// guaranteed to match between an existing card's stored target and a
+// freshly-parsed one from the LLM's latest response, and a naive
+// string comparison would treat two functionally-identical targets
+// with differently-ordered keys as different actions, silently
+// defeating the whole point of matching on structure over prose.
+function structuredTargetsMatch(a, b) {
+  if (!a || !b || a.type !== b.type) return false;
+  const keysA = Object.keys(a), keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every(k => a[k] === b[k]);
+}
+
+function findMatchingActionCard(cards, structuredTarget) {
+  return cards.find(c => structuredTargetsMatch(c.structuredTarget, structuredTarget)) || null;
+}
+
+function _newActionCardId() {
+  return 'ac_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+// Creates a new card, OR resets an existing one in place if
+// structuredTarget already matches one of the cards passed in — same
+// operation either way from the caller's perspective (upsert), since
+// "is this actually new or a reset" is exactly the ambiguity this
+// function exists to resolve via structuredTargetsMatch rather than
+// making every call site re-implement that check. Returns the full,
+// updated cards array — does not save it; the caller decides when to
+// persist, since this may be called several times in a row while
+// processing one insight response before a single save at the end.
+function upsertActionCard(cards, structuredTarget, proseText) {
+  const existing = findMatchingActionCard(cards, structuredTarget);
+  const today = new Date().toISOString().slice(0, 10);
+  if (existing) {
+    existing.proseText = proseText;
+    existing.startDate = today;
+    existing.weeklyResults = [null, null, null, null, null, null];
+    return cards;
+  }
+  cards.push({
+    id: _newActionCardId(),
+    structuredTarget,
+    proseText,
+    startDate: today,
+    weeklyResults: [null, null, null, null, null, null]
+  });
+  return cards;
+}
+
+// Week i of a card's window is [startDate + i*7 days, startDate + (i+1)*7 days).
+function _getCardWeekRange(card, weekIndex) {
+  const start = new Date(card.startDate + 'T00:00:00');
+  start.setDate(start.getDate() + weekIndex * 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return { start, end };
+}
+
+// Pure function: given a concrete date range and the type-specific
+// target, returns true/false — or null if this target's type isn't
+// (yet) one this function knows how to evaluate, e.g. a card created
+// for a recommendation shape that only has commentary-level tracking
+// so far (see the type list documented above upsertActionCard). null
+// here means "can't determine," same meaning as an unevaluated future
+// week — refreshActionCardResults leaves both as null rather than
+// guessing.
+//
+// Separated from refreshActionCardResults (which decides WHICH weeks
+// need evaluating) so this piece — the actual pass/fail rule per type —
+// is independently testable and is the one place each target type's
+// logic lives, rather than duplicated across every caller that needs
+// to check a week.
+function evaluateCardWeek(structuredTarget, weekStart, weekEnd, hist) {
+  const weekSessions = hist.filter(w => {
+    if (!w.date) return false;
+    const d = new Date(w.date);
+    return d >= weekStart && d < weekEnd;
+  });
+
+  if (structuredTarget.type === 'movement_pattern_count') {
+    const matchCount = weekSessions.filter(w =>
+      (w.blocks || []).some(block =>
+        (block.movements || []).some(mv => getMovementPattern(mv.name) === structuredTarget.pattern)
+      )
+    ).length;
+    return matchCount >= structuredTarget.target;
+  }
+
+  if (structuredTarget.type === 'weekly_session_consistency') {
+    const count = weekSessions.length;
+    const tolerance = structuredTarget.tolerance || 0;
+    return count >= (structuredTarget.target - tolerance) && count <= (structuredTarget.target + tolerance);
+  }
+
+  return null; // unknown/unsupported type — not evaluable yet
+}
+
+// Fills in weeklyResults for every card, for every week that has fully
+// elapsed (weekEnd <= now) and hasn't already been evaluated (still
+// null). Never re-evaluates a week that already holds true/false —
+// that result is locked in once a week has passed; only a reset (via
+// upsertActionCard, a separate operation) clears results back to null.
+// A week that's still in progress (now falls inside its range) stays
+// null on purpose — more sessions could still be logged before it
+// ends, so evaluating it early could lock in a wrong answer.
+//
+// Returns the updated cards array; does not save it, matching
+// upsertActionCard's pattern — call sites decide when to persist,
+// since this is meant to run as a cheap refresh (e.g. on app load or
+// before rendering the cards UI) that may not always need a write.
+function refreshActionCardResults(cards, hist) {
+  const now = new Date();
+  cards.forEach(card => {
+    for (let i = 0; i < 6; i++) {
+      if (card.weeklyResults[i] !== null) continue; // already locked in
+      const { start, end } = _getCardWeekRange(card, i);
+      if (now < end) break; // this week and every week after it haven't fully elapsed yet — stop, don't skip ahead into future weeks
+      card.weeklyResults[i] = evaluateCardWeek(card.structuredTarget, start, end, hist);
+    }
+  });
+  return cards;
+}
+
+// Valid pattern.* keys getMovementPattern() can actually return — kept
+// as an explicit list (not derived from the function itself, which has
+// no "list all possible outputs" mode) so an LLM-supplied
+// structuredTarget.pattern can be validated against real values rather
+// than trusted on the strength of the prompt instruction alone.
+const VALID_MOVEMENT_PATTERNS = new Set([
+  'pattern.squat', 'pattern.hinge', 'pattern.push', 'pattern.pull',
+  'pattern.olympic', 'pattern.core', 'pattern.carry', 'pattern.handstand',
+  'pattern.monostructural'
+]);
+
+// Returns a validated structuredTarget, or null if malformed/invalid —
+// null here is treated exactly like the LLM omitting structuredTarget
+// entirely (see _processInsightRecommendations below): the
+// recommendation still displays as prose, it just doesn't become a
+// trackable card. This is the actual enforcement of the prompt's
+// constraints — the prompt asking nicely for a valid pattern key is
+// not a guarantee one was returned, same reasoning as every other
+// hallucination-risk spot in this file.
+function _validateStructuredTarget(st) {
+  if (!st || typeof st !== 'object') return null;
+  if (st.type === 'movement_pattern_count') {
+    if (!VALID_MOVEMENT_PATTERNS.has(st.pattern)) return null;
+    const target = parseInt(st.target);
+    if (!Number.isInteger(target) || target < 1) return null;
+    return { type: 'movement_pattern_count', pattern: st.pattern, target };
+  }
+  if (st.type === 'weekly_session_consistency') {
+    const target = parseInt(st.target);
+    const tolerance = parseInt(st.tolerance);
+    if (!Number.isInteger(target) || target < 1) return null;
+    if (!Number.isInteger(tolerance) || tolerance < 0) return null;
+    return { type: 'weekly_session_consistency', target, tolerance };
+  }
+  return null; // unknown type — not one of the two supported shapes
+}
+
+// Applies one insight response's recommendations to the stored action
+// cards: "new" items with a valid structuredTarget become (or reset) a
+// tracked card via upsertActionCard; "commentary" items attach their
+// text to an existing card for display, found by exact id match against
+// what's actually stored right now — never trusted blindly, since a
+// hallucinated or stale targetCardId is a real possibility despite the
+// prompt instruction. Saves once at the end rather than after each
+// item, and refreshes weekly results afterward so a freshly-created
+// card's (all-null) grid and any newly-reset card are both consistent
+// with the rest of the app immediately, not stale until some later
+// unrelated refresh happens to run.
+function _processInsightRecommendations(recommendations) {
+  let cards = getActionCards();
+  const hist = getHistory();
+
+  (recommendations || []).forEach(r => {
+    if (!r || typeof r !== 'object') return;
+    if (r.type === 'new') {
+      const validTarget = _validateStructuredTarget(r.structuredTarget);
+      if (validTarget) {
+        cards = upsertActionCard(cards, validTarget, r.text || '');
+      }
+      // No structuredTarget (or an invalid one) — this recommendation
+      // stays in the plain recommendations array for display, same as
+      // before this feature existed. Not an error case; per the
+      // prompt, plenty of valid recommendations don't fit either
+      // trackable shape on purpose.
+    } else if (r.type === 'commentary') {
+      const card = cards.find(c => c.id === r.targetCardId);
+      if (card) card.latestCommentary = r.text || '';
+      // targetCardId not found among current cards — silently dropped
+      // rather than attached to the wrong card or thrown as an error;
+      // the underlying card may have expired or been reset between
+      // when the payload was built and when this response arrived.
+    }
+  });
+
+  cards = refreshActionCardResults(cards, hist);
+  saveActionCards(cards);
+}
+
 function toggleInsightCard() {
   _insightExpanded = !_insightExpanded;
   localStorage.setItem('wod-insight-expanded', _insightExpanded);
@@ -207,6 +466,20 @@ function _buildInsightPayload(hist) {
       dominantModality,
       consistency
     },
+    // Active action cards — included ONLY so the coach can (a) avoid
+    // recommending something that's already being tracked, generating
+    // a differently-worded duplicate of an existing card, and (b)
+    // encourage follow-through on a card that isn't being hit, rather
+    // than staying silent on it. Deliberately NOT used for anything
+    // more elaborate (changing strategy on a repeatedly-missed card,
+    // narrating a card's history) — settled scope, narrower than what
+    // was originally proposed for this payload.
+    activeCards: refreshActionCardResults(getActionCards(), hist).map(c => ({
+      id: c.id,
+      text: c.proseText,
+      weeksElapsed: c.weeklyResults.filter(w => w !== null).length,
+      weeksMet: c.weeklyResults.filter(w => w === true).length
+    })),
     recovery: {
       aerobic: {
         ctlTrend,
@@ -293,13 +566,24 @@ METRIC DEFINITIONS — interpret these correctly:
 - Pattern distribution: how many sessions in 6 weeks included each movement pattern. Imbalances (e.g. squat every week, no pull work) are coaching opportunities.
 - Per-session table (sessionTable): the actual session-by-session FB/PD/RL/efficiency values behind the weekly averages above. Use this for any claim about a range, spread, or specific session — e.g. "sessions ranged from X to Y" must be read directly off this table, never estimated or extrapolated from the weekly averages. If you state a minimum, maximum, or specific value, it must appear literally in this table.
 - RPE accuracy (rpeAccuracy): compares the athlete's self-rated RPE against real heart-rate-derived intensity, ONLY for sessions where both exist. sampleSize tells you how many sessions that is — if it's small (roughly under 5), treat any pattern here as a single observation worth watching, not an established finding, and say so explicitly rather than stating it as fact. If sampleSize is 0, do not mention RPE accuracy at all.
+- Active action cards (activeCards): recommendations from previous cycles the athlete is currently being tracked against, each with weeksElapsed (how many weeks of its 6-week window have been scored so far) and weeksMet (how many of those were on-target). This exists for exactly two purposes and nothing more: (1) do not generate a new recommendation that duplicates the intent of an existing active card, even worded differently — check the list before writing each new recommendation; (2) for a card that's underperforming (weeksMet meaningfully below weeksElapsed), write commentary that encourages following the existing action — do not reframe it, escalate it, or propose a different approach, just encourage adherence to what's already being tracked. Do not narrate a card's full history or speculate about why it isn't being hit.
 
-Even when training is going well, always find 3 specific actionable ways to improve, optimize or progress further. A good coach never just praises — they identify the next challenge, the weak link, or the next level to pursue. Recommendations should be forward-looking and concrete, not generic.
+RECOMMENDATION OUTPUT — how many, and what shape:
+Let N = the number of items currently in activeCards.
+- Output max(1, 3 - N) NEW recommendations (type "new"). This is always at least 1, even when N is already 3 or more.
+- Fill any remaining slots, up to 3 total items, with commentary on existing active cards (type "commentary") — one item per card, prioritizing cards that are underperforming. If there are fewer active cards than remaining slots, output fewer than 3 items total rather than inventing extra commentary or extra new recommendations to pad the count.
+- Every "new" item needs "text" (the recommendation, exactly as before). If — and only if — the recommendation is a specific, countable, weekly action, ALSO include "structuredTarget" using ONE of these two shapes:
+  - {"type":"movement_pattern_count","pattern":"<one of: pattern.squat, pattern.hinge, pattern.push, pattern.pull, pattern.olympic, pattern.core, pattern.carry, pattern.handstand, pattern.monostructural>","target":<integer, sessions per week>}
+  - {"type":"weekly_session_consistency","target":<integer, sessions per week>,"tolerance":<integer, allowed deviation either direction>}
+  Omit "structuredTarget" entirely for a recommendation that doesn't cleanly fit one of these two shapes (e.g. a duration- or pace-qualified suggestion) — do not force it into a shape that misrepresents it. The "pattern" value must be exactly one of the strings listed above — never invent a new one.
+- Every "commentary" item needs "text" and "targetCardId" set to the exact "id" of the activeCards entry it's about — never a card id that doesn't appear in activeCards.
+
+Even when training is going well, always find ways to improve, optimize or progress further within whatever recommendation budget the rule above allows. A good coach never just praises — they identify the next challenge, the weak link, or the next level to pursue. New recommendations should be forward-looking and concrete, not generic.
 
 CRITICAL — do not state a specific number (a range, a minimum, a maximum, a single session's value) unless it appears literally in the data provided. If you want to describe a spread or pattern across multiple data points, either read the actual values from sessionTable or describe it qualitatively (e.g. "varied considerably") rather than inventing a specific number.
 
 Return this exact JSON structure, no markdown, no backticks, no other text:
-{"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":["specific forward-looking recommendation 1","specific forward-looking recommendation 2","specific forward-looking recommendation 3"]}`;
+{"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":[{"type":"new","text":"specific forward-looking recommendation","structuredTarget":{"type":"movement_pattern_count","pattern":"pattern.pull","target":1}},{"type":"commentary","text":"encouragement referencing an existing active card","targetCardId":"the exact id from activeCards"}]}`;
 
     const userPrompt = `Athlete goal: ${goalLabel}
 Fitness level: ${payload.profile.fitnessLevel}
@@ -322,7 +606,10 @@ Recovery patterns (6-week view — not current state):
 ${payload.recovery.rpeAccuracy.sampleSize > 0 ? `- RPE accuracy — SMALL SAMPLE (${payload.recovery.rpeAccuracy.sampleSize} of ${payload.training.totalSessions} sessions had both real HR and a logged RPE): ${payload.recovery.rpeAccuracy.sessions.map(s => `${s.date}: real ${s.realPctHRR}% HRR vs RPE-implied ${s.rpeImpliedPct}%, delta ${s.deltaPts > 0 ? '+' : ''}${s.deltaPts} pts`).join('; ')}. Average delta: ${payload.recovery.rpeAccuracy.avgDeltaPts > 0 ? '+' : ''}${payload.recovery.rpeAccuracy.avgDeltaPts} pts. This sample is too small to state as a firm conclusion — mention it only as a single observation worth watching if you reference it at all.` : ''}
 
 Trends:
-- CTL change over 6 weeks: ${payload.trends.ctlChange6w > 0 ? '+' : ''}${payload.trends.ctlChange6w}% (0% means stable, positive means building, negative means declining — do not comment on absolute CTL values)`;
+- CTL change over 6 weeks: ${payload.trends.ctlChange6w > 0 ? '+' : ''}${payload.trends.ctlChange6w}% (0% means stable, positive means building, negative means declining — do not comment on absolute CTL values)
+
+Active action cards (${payload.activeCards.length}) — check before writing each new recommendation, and use for commentary items:
+${payload.activeCards.length ? payload.activeCards.map(c => `  id "${c.id}": "${c.text}" — on target ${c.weeksMet} of ${c.weeksElapsed} scored weeks so far`).join('\n') : '  (none yet)'}`;
 
     // Get Supabase JWT for authentication
     const sb = getSB();
@@ -349,6 +636,8 @@ Trends:
     const text = data.content?.[0]?.text || '';
     const clean = text.replace(/```json|```/g, '').trim();
     const result = JSON.parse(clean);
+
+    _processInsightRecommendations(result.recommendations || []);
 
     const cache = {
       summary:       result.summary,
@@ -466,14 +755,56 @@ function _renderInsightResult(cache, hist) {
     </div>
     <div style="border-top:0.5px solid var(--glass-border);padding-top:10px;">
       <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:6px;">${t('insight.recs')}</div>
-      ${(cache.recommendations||[]).map(r => `
+      ${(cache.recommendations||[]).filter(r => r && r.type === 'new').map(r => `
         <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start;">
           <span style="color:var(--brand);font-weight:900;flex-shrink:0;">→</span>
-          <span style="font-size:.76rem;color:var(--text);line-height:1.5;">${r}</span>
+          <span style="font-size:.76rem;color:var(--text);line-height:1.5;">${r.text}</span>
         </div>`).join('')}
     </div>
+    ${_renderActionCardsSection()}
     ${refreshBtn ? `<div style="text-align:center;border-top:0.5px solid var(--glass-border);padding-top:10px;margin-top:4px;">${refreshBtn}</div>` : ''}`;
 
   if (body) body.style.display = _insightExpanded ? 'block' : 'none';
   if (chevron) chevron.style.transform = _insightExpanded ? 'rotate(180deg)' : '';
+}
+
+// Six small cells, one per week of a card's window — grey (not yet
+// evaluated: future or the current in-progress week), green with a
+// checkmark (met that week), or muted red (evaluated, not met). This
+// grid IS the status display for a card — deliberately no separate
+// "partial/met" badge layered on top of it, since "which weeks were
+// hit and which weren't" at a glance is exactly what was asked for,
+// and a card-level summary badge would just be restating the same six
+// cells in a vaguer form.
+function _renderActionCardWeekGrid(weeklyResults) {
+  return `<div style="display:flex;gap:4px;">
+    ${weeklyResults.map((w, i) => {
+      const bg = w === true ? '#22C55E' : w === false ? '#EF4444' : 'var(--glass-border)';
+      const content = w === true ? '✓' : w === false ? '✕' : '';
+      const opacity = w === null ? '.5' : '1';
+      return `<div title="${t('insight.actioncards.week') || 'Week'} ${i + 1}" style="width:22px;height:22px;border-radius:5px;background:${bg};opacity:${opacity};display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:900;color:white;flex-shrink:0;">${content}</div>`;
+    }).join('')}
+  </div>`;
+}
+
+function _renderActionCardsSection() {
+  // Refreshed here, not only right after a new insight generates —
+  // time passes and new sessions get logged between insight cycles,
+  // so a card's grid needs to reflect "as of right now" every time
+  // this section is actually shown, not just whatever it looked like
+  // when the cache was last written.
+  let cards = getActionCards();
+  if (!cards.length) return '';
+  cards = refreshActionCardResults(cards, getHistory());
+  saveActionCards(cards);
+
+  return `<div style="border-top:0.5px solid var(--glass-border);padding-top:10px;margin-top:2px;">
+    <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:8px;">${t('insight.actioncards.title') || 'Action Cards'}</div>
+    ${cards.map(c => `
+      <div style="margin-bottom:12px;padding:10px;border:0.5px solid var(--glass-border);border-radius:10px;">
+        <div style="font-size:.76rem;color:var(--text);line-height:1.5;margin-bottom:8px;">${c.proseText}</div>
+        ${_renderActionCardWeekGrid(c.weeklyResults)}
+        ${c.latestCommentary ? `<div style="font-size:.7rem;color:var(--label);font-style:italic;margin-top:8px;line-height:1.4;">${c.latestCommentary}</div>` : ''}
+      </div>`).join('')}
+  </div>`;
 }
