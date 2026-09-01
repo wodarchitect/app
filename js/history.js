@@ -380,7 +380,7 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
     // Trigger coaching insight regeneration only if refresh conditions are met
     setTimeout(() => {
       const hist2 = getHistory();
-      const cacheKey = 'wod-insight-cache-' + (_lang==='es'?'es':'en') + '-' + (document.getElementById('global-goal')?.value||'general');
+      const cacheKey = 'wod-insight-cache-' + (document.getElementById('global-goal')?.value||'general');
       const cached = _insightCache || JSON.parse(localStorage.getItem(cacheKey) || 'null');
       if (hist2.length === INSIGHT_MIN_SESSIONS && !localStorage.getItem('wod-insight-unlocked')) {
         localStorage.setItem('wod-insight-unlocked', '1');

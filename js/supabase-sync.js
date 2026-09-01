@@ -534,11 +534,14 @@ async function sbStartupSync(uid) {
       // Local is only used when offline (no Supabase connection)
       await sbApplyProfile(prof);
       localStorage.setItem('wod_profile_updated_at', prof.updated_at || new Date().toISOString());
-      // Load cached coaching insight from cloud
+      // Load cached coaching insight from cloud — one bilingual cache
+      // now, keyed by goal only (matches the goal-only key
+      // generateCoachingInsight itself now uses; the old .lang-keyed
+      // shape and its per-language cache key are gone).
       if (prof.coaching_insight) {
         const ci = prof.coaching_insight;
-        if (ci.lang) localStorage.setItem('wod-insight-cache-' + ci.lang, JSON.stringify(ci));
-        if (ci.lang === (_lang === 'es' ? 'es' : 'en')) _insightCache = ci;
+        if (ci.goal) localStorage.setItem('wod-insight-cache-' + ci.goal, JSON.stringify(ci));
+        _insightCache = ci;
       }
       // Load action cards from cloud — cloud is source of truth here too,
       // same rule as the rest of this profile fetch, and safe to apply

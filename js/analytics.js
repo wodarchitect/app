@@ -664,19 +664,20 @@ function renderAnalytics() {
   renderRecoveryStatus();
   // Re-render pattern pie if a profile was calculated this session
   if (_lastPatternProfile) renderMovementPatternProfile(_lastPatternProfile);
-  // Render coaching insight — clear cache if language changed
-  const currentInsightLang = _lang === 'es' ? 'es' : 'en';
-  if (_insightCache?.lang && _insightCache.lang !== currentInsightLang) _insightCache = null;
+  // Render coaching insight — cache is goal-only now, language is a
+  // pure display choice picked at render time (see _pickLang in
+  // coaching-insight.js), so a language switch here no longer clears
+  // anything or affects which cache entry is valid.
   const currentGoal = document.getElementById('global-goal')?.value || 'general';
-  const cacheKey = 'wod-insight-cache-' + currentInsightLang + '-' + currentGoal;
-  const cached = (_insightCache?.lang === currentInsightLang && _insightCache?.goal === currentGoal ? _insightCache : null) || JSON.parse(localStorage.getItem(cacheKey) || 'null');
-  const cachedLangMatch = cached?.lang === currentInsightLang && cached?.goal === currentGoal;
+  const cacheKey = 'wod-insight-cache-' + currentGoal;
+  const cached = (_insightCache?.goal === currentGoal ? _insightCache : null) || JSON.parse(localStorage.getItem(cacheKey) || 'null');
+  const cachedGoalMatch = cached?.goal === currentGoal;
   const hist = getHistory();
   if (hist.length < INSIGHT_MIN_SESSIONS) {
     _renderInsightUnlock(hist.length);
-  } else if (cached && cachedLangMatch && !_insightRefreshDue(cached, hist)) {
+  } else if (cached && cachedGoalMatch && !_insightRefreshDue(cached, hist)) {
     _renderInsightResult(cached, hist);
-  } else if (cached && cachedLangMatch && _insightRefreshDue(cached, hist)) {
+  } else if (cached && cachedGoalMatch && _insightRefreshDue(cached, hist)) {
     _renderInsightResult(cached, hist); // show cached but with refresh button
   } else {
     _renderInsightLoading();
