@@ -534,15 +534,22 @@ async function sbStartupSync(uid) {
       // Local is only used when offline (no Supabase connection)
       await sbApplyProfile(prof);
       localStorage.setItem('wod_profile_updated_at', prof.updated_at || new Date().toISOString());
-      // Load cached coaching insight from cloud — one bilingual cache
-      // now, keyed by goal only (matches the goal-only key
-      // generateCoachingInsight itself now uses; the old .lang-keyed
-      // shape and its per-language cache key are gone).
-      if (prof.coaching_insight) {
-        const ci = prof.coaching_insight;
-        if (ci.goal) localStorage.setItem('wod-insight-cache-' + ci.goal, JSON.stringify(ci));
-        _insightCache = ci;
-      }
+      // Load cached coaching insight from cloud — per-language again
+      // (coaching_insight_en / coaching_insight_es), matching what
+      // generateCoachingInsight's push actually writes. Both may be
+      // present on the same profile row (one per language the athlete
+      // has generated an insight in) — each gets its own localStorage
+      // cache key, and only the one matching the CURRENT display
+      // language becomes the live _insightCache; the other is cached
+      // locally too, ready the moment the athlete switches, without
+      // needing a fresh generation.
+      const currentInsightLang = _lang === 'es' ? 'es' : 'en';
+      ['en', 'es'].forEach(lang => {
+        const ci = prof['coaching_insight_' + lang];
+        if (!ci) return;
+        if (ci.goal) localStorage.setItem('wod-insight-cache-' + lang + '-' + ci.goal, JSON.stringify(ci));
+        if (lang === currentInsightLang) _insightCache = ci;
+      });
       // Load action cards from cloud — cloud is source of truth here too,
       // same rule as the rest of this profile fetch, and safe to apply
       // even if the cloud copy has a slightly stale weeklyResults: this

@@ -21,22 +21,7 @@ function _insightRefreshDue(cached, hist) {
   return trainingDaysDiff >= INSIGHT_REGEN_TRAINING_DAYS && daysDiff >= INSIGHT_REGEN_DAYS;
 }
 let _insightExpanded = localStorage.getItem('wod-insight-expanded') === 'true';
-let _insightCache = null; // { summary_en, summary_es, goalAlignment_en, goalAlignment_es, recovery_en, recovery_es, recommendations, generatedAt, sessionCount, goal }
-
-// Picks obj[field + '_' + currentLang], falling back to the other
-// language if the current one is somehow empty (a partial/malformed
-// LLM response, say) rather than showing nothing at all — a wrong-
-// language fallback is still more useful to the athlete than a blank
-// section. Single point of truth for "how do we read a bilingual
-// field," used by every render spot that touches summary/goalAlignment/
-// recovery or a card's headline/diagnosticWhy/prescribedAction/
-// latestCommentary, so the fallback behavior is consistent everywhere
-// rather than re-implemented per call site.
-function _pickLang(obj, field) {
-  const lang = _lang === 'es' ? 'es' : 'en';
-  const other = lang === 'es' ? 'en' : 'es';
-  return obj[field + '_' + lang] || obj[field + '_' + other] || '';
-}
+let _insightCache = null; // { summary, goalAlignment, recovery, recommendations, generatedAt, sessionCount, lang, goal }
 
 // ══ Coach Action Cards ══
 // One card per tracked recommendation. Each card runs a fixed 6-week
@@ -52,16 +37,31 @@ function _pickLang(obj, field) {
 //       array position. Generated once at creation, never reused.
 //     structuredTarget: { type, ...type-specific fields, target } —
 //       the machine-checkable definition of what this card tracks.
-//       THIS, not proseText, is what defines whether an incoming
-//       recommendation is "the same action" for matching/reset
-//       purposes — proseText is free text the LLM writes fresh every
-//       cycle and is expected to vary in wording even when the intent
-//       is identical.
-//     proseText: string — the latest human-readable recommendation
-//       text, shown on the card. Overwritten on reset with whatever
-//       the LLM wrote that cycle, even though structuredTarget stayed
-//       the same — the display text should reflect how the coach is
+//       THIS, not the display text, is what defines whether an
+//       incoming recommendation is "the same action" for matching/
+//       reset purposes — the display text is free text the LLM writes
+//       fresh every cycle and is expected to vary in wording even when
+//       the intent is identical.
+//     lang: 'en' | 'es' — the language headline/diagnosticWhy/
+//       prescribedAction/latestCommentary are CURRENTLY written in, set
+//       at creation or reset from the global _lang. The Analytics
+//       render filters displayed cards to lang === current display
+//       language — a card generated in the other language is hidden,
+//       never shown mixed in alongside these. A card only "switches"
+//       language if a later cycle's structuredTarget happens to match
+//       it (a reset updates lang along with everything else); there is
+//       deliberately no bilingual storage — English and Spanish
+//       versions of the same underlying recommendation are allowed to
+//       differ, even disagree, since the athlete only ever sees one
+//       language at a time and generating both every cycle roughly
+//       doubled response size for a guarantee nobody needed (see the
+//       reverted bilingual attempt in git history / prior session).
+//     headline / diagnosticWhy / prescribedAction: display text, all
+//       in `lang`. Overwritten on reset with whatever the LLM wrote
+//       that cycle — the display text should reflect how the coach is
 //       currently phrasing it, not freeze at the original wording.
+//     category: one of the four CARD_CATEGORY_DISPLAY keys — language-
+//       independent (an enum, not display text).
 //     startDate: ISO date string — when this card's CURRENT 6-week
 //       window began. A reset sets this to now, discarding the old
 //       window entirely rather than preserving a partial history with
@@ -71,6 +71,9 @@ function _pickLang(obj, field) {
 //       been evaluated yet (current, in-progress week); true/false =
 //       an evaluated past week's pass/fail. Index 0 = the week
 //       starting at startDate.
+//     latestCommentary: string | null — the coach's most recent
+//       encouragement on this card, in `lang`. Cleared on reset (see
+//       upsertActionCard) since it refers to the prior window.
 //   }
 //
 // Known structuredTarget.type values (extend this list as new types
@@ -154,52 +157,56 @@ function _newActionCardId() {
 // four strings is not a guarantee one came back.
 const VALID_CARD_CATEGORIES = new Set(['PATTERN_IMBALANCE', 'GOAL_ALIGNMENT', 'LOAD_PERIODIZATION', 'RECOVERY']);
 
-// cardContent = { headline_en, headline_es, diagnosticWhy_en,
-// diagnosticWhy_es, prescribedAction_en, prescribedAction_es, category }
-// — bilingual, both languages decided and stored together from a
-// single generation, never regenerated by a language switch. This
-// replaces the old single-language proseText/headline shape entirely.
-// Headline is defensively truncated to 8 words in EACH language here
-// (not just requested in the prompt) for the same reason every other
-// LLM-supplied constraint in this file is re-enforced in code rather
-// than trusted: a word-count instruction is a request, not a
-// guarantee. category falls back to 'PATTERN_IMBALANCE' if missing or
-// not one of the four known values, rather than leaving the card with
-// an unrenderable badge — category itself is language-independent
-// (an enum key, not display text; the actual label comes from
-// CARD_CATEGORY_DISPLAY, keyed by this value, at render time).
+// cardContent = { headline, diagnosticWhy, prescribedAction, category }
+// — single-language again (reverted from the bilingual shape — see
+// generateCoachingInsight's cache-key comment for why). Headline is
+// defensively truncated to 8 words here (not just requested in the
+// prompt) for the same reason every other LLM-supplied constraint in
+// this file is re-enforced in code rather than trusted: a word-count
+// instruction is a request, not a guarantee. category falls back to
+// 'PATTERN_IMBALANCE' if missing or not one of the four known values,
+// rather than leaving the card with an unrenderable badge.
 function _sanitizeCardContent(cardContent) {
-  const truncate = (s) => (s || '').trim().split(/\s+/).slice(0, 8).join(' ');
+  const headline = (cardContent.headline || '').trim().split(/\s+/).slice(0, 8).join(' ');
   return {
-    headline_en: truncate(cardContent.headline_en),
-    headline_es: truncate(cardContent.headline_es),
-    diagnosticWhy_en: cardContent.diagnosticWhy_en || '',
-    diagnosticWhy_es: cardContent.diagnosticWhy_es || '',
-    prescribedAction_en: cardContent.prescribedAction_en || '',
-    prescribedAction_es: cardContent.prescribedAction_es || '',
+    headline,
+    diagnosticWhy: cardContent.diagnosticWhy || '',
+    prescribedAction: cardContent.prescribedAction || '',
     category: VALID_CARD_CATEGORIES.has(cardContent.category) ? cardContent.category : 'PATTERN_IMBALANCE'
   };
 }
 
+// lang: the language this card's text is CURRENTLY in — read from the
+// global _lang at the moment of creation/reset, not passed explicitly,
+// since this is always called from within a single generation's own
+// language context. This is the actual fix for the original mixing
+// bug: rendering filters action cards to lang === current display
+// language, so a card generated in one language never shows up
+// alongside cards from the other — it's simply hidden until the
+// athlete is back in its language, or until a matching structuredTarget
+// resets it (updating its lang along with everything else, effectively
+// "converting" it rather than leaving a stale duplicate behind).
 function upsertActionCard(cards, structuredTarget, cardContent) {
   const existing = findMatchingActionCard(cards, structuredTarget);
   const today = new Date().toISOString().slice(0, 10);
   const content = _sanitizeCardContent(cardContent);
+  const lang = _lang === 'es' ? 'es' : 'en';
   if (existing) {
     Object.assign(existing, content);
+    existing.lang = lang;
     existing.startDate = today;
     existing.weeklyResults = [null, null, null, null, null, null];
     // A reset also clears any leftover commentary from the prior
     // window — it referred to the old 6-week cycle's progress, and
     // showing it under a grid that just restarted would misrepresent
     // it as current.
-    existing.latestCommentary_en = null;
-    existing.latestCommentary_es = null;
+    existing.latestCommentary = null;
     return cards;
   }
   cards.push({
     id: _newActionCardId(),
     structuredTarget,
+    lang,
     ...content,
     startDate: today,
     weeklyResults: [null, null, null, null, null, null]
@@ -339,12 +346,9 @@ function _processInsightRecommendations(recommendations) {
       const validTarget = _validateStructuredTarget(r.structuredTarget);
       if (validTarget) {
         cards = upsertActionCard(cards, validTarget, {
-          headline_en: r.headline_en,
-          headline_es: r.headline_es,
-          diagnosticWhy_en: r.diagnosticWhy_en,
-          diagnosticWhy_es: r.diagnosticWhy_es,
-          prescribedAction_en: r.prescribedAction_en,
-          prescribedAction_es: r.prescribedAction_es,
+          headline: r.headline,
+          diagnosticWhy: r.diagnosticWhy,
+          prescribedAction: r.prescribedAction,
           category: r.category
         });
       }
@@ -354,12 +358,18 @@ function _processInsightRecommendations(recommendations) {
       // prompt, plenty of valid recommendations don't fit either
       // trackable shape on purpose.
     } else if (r.type === 'commentary') {
-      const card = cards.find(c => c.id === r.targetCardId);
-      if (card) {
-        card.latestCommentary_en = r.text_en || '';
-        card.latestCommentary_es = r.text_es || '';
-      }
+      const currentLang = _lang === 'es' ? 'es' : 'en';
+      const card = cards.find(c => c.id === r.targetCardId && c.lang === currentLang);
+      if (card) card.latestCommentary = r.text || '';
       // targetCardId not found among current cards — silently dropped
+      // (also silently dropped if it's found but its lang doesn't match
+      // the current generation's language: applying commentary text in
+      // one language to a card whose headline/etc. are still in the
+      // other would create exactly the mixed-language card this whole
+      // lang-tagging scheme exists to prevent — that card just won't
+      // get this round's commentary, which is the correct outcome
+      // when the card isn't even currently visible under this
+      // language's filter to begin with)
       // rather than attached to the wrong card or thrown as an error;
       // the underlying card may have expired or been reset between
       // when the payload was built and when this response arrived.
@@ -564,7 +574,7 @@ function _buildInsightPayload(hist) {
     // was originally proposed for this payload.
     activeCards: refreshActionCardResults(getActionCards(), hist).map(c => ({
       id: c.id,
-      text: c.headline_en || c.headline_es || '',
+      text: c.headline || '',
       weeksElapsed: c.weeklyResults.filter(w => w !== null).length,
       weeksMet: c.weeklyResults.filter(w => w === true).length
     })),
@@ -595,23 +605,24 @@ async function generateCoachingInsight(force = false) {
     return;
   }
 
-  // Cache is keyed by goal only, NOT language — language is purely a
-  // display choice now, decided at render time from a single bilingual
-  // generation, never its own axis for regeneration. Goal still
-  // legitimately changes the underlying analysis and recommendations
-  // themselves (see goalGuidance below), so a goal change correctly
-  // still triggers a fresh generation — only language stopped being a
-  // reason to regenerate. This also retires the old per-language cache
-  // key scheme entirely, along with the dead "clear stale cache on
-  // language change" cleanup that used to sit here — it tried to
-  // remove a literal 'wod-insight-cache' key with no suffix while the
-  // real keys were always suffixed with -lang-goal, so it silently
-  // never actually cleared anything; moot now, since there's only one
-  // cache per goal to begin with.
+  // Cache is keyed by BOTH language and goal, back to the original
+  // scheme — reverted from a single bilingual-per-generation approach
+  // (see git history / prior turn) after reconsidering the actual
+  // requirement: the athlete doesn't need English and Spanish to be
+  // the same insight, just never mixed together on screen at once.
+  // Generating both languages every cycle roughly doubled response
+  // size and started truncating mid-string against the backend's
+  // max_tokens limit — a real cost for a guarantee (identical content
+  // across languages) nobody asked for. The actual mixing bug is fixed
+  // below instead, by tagging each action card with the language it
+  // was generated in and filtering the DISPLAY to one language at a
+  // time — cheaper, and targets the real problem directly rather than
+  // solving a bigger one that happened to make it moot.
+  const currentLang = _lang === 'es' ? 'es' : 'en';
   const currentGoal = document.getElementById('global-goal')?.value || 'general';
-  const cacheKey = 'wod-insight-cache-' + currentGoal;
-  const cached = (_insightCache?.goal === currentGoal ? _insightCache : null) || JSON.parse(localStorage.getItem(cacheKey) || 'null');
-  if (!force && cached && cached.goal === currentGoal && !_insightRefreshDue(cached, hist)) {
+  const cacheKey = 'wod-insight-cache-' + currentLang + '-' + currentGoal;
+  const cached = (_insightCache?.lang === currentLang && _insightCache?.goal === currentGoal ? _insightCache : null) || JSON.parse(localStorage.getItem(cacheKey) || 'null');
+  if (!force && cached && cached.lang === currentLang && cached.goal === currentGoal && !_insightRefreshDue(cached, hist)) {
     _insightCache = cached;
     _renderInsightResult(cached);
     return;
@@ -632,9 +643,8 @@ async function generateCoachingInsight(force = false) {
       : payload.profile.goal === 'endurance' ? 'For an Endurance goal, focus on aerobic CTL growth, cardio volume and session consistency.'
       : '';
 
-    const systemPrompt = `You are an experienced CrossFit coach with deep knowledge of CrossFit methodology, programming, and periodization. You understand GPP (General Physical Preparedness), the CrossFit theoretical hierarchy, energy systems, and how to structure training across the ten physical skills (cardiovascular endurance, stamina, strength, flexibility, power, speed, coordination, agility, balance, accuracy). Speak directly to the athlete in second person. Be specific and honest.
-
-Every text field in your output must be provided in BOTH English and Spanish — see the JSON structure at the end of this prompt for the exact "_en"/"_es" field naming. This is ONE analysis of the athlete's training, expressed in two languages, not two separate opinions — the underlying judgment (which patterns matter, what the recommendations are, which structuredTarget values apply, which cards get commentary) must be identical between the two; only the wording differs. Never let the Spanish version reach a different conclusion, cite different numbers, or recommend something different than the English version — a reader switching between them should see a translation of the same analysis, never a second, independent one. Fields with no language variant (type, category, structuredTarget, targetCardId) are written once, not duplicated.
+    const currentLangName = currentLang === 'es' ? 'Spanish' : 'English';
+    const systemPrompt = `You are an experienced CrossFit coach with deep knowledge of CrossFit methodology, programming, and periodization. You understand GPP (General Physical Preparedness), the CrossFit theoretical hierarchy, energy systems, and how to structure training across the ten physical skills (cardiovascular endurance, stamina, strength, flexibility, power, speed, coordination, agility, balance, accuracy). Speak directly to the athlete in second person. Be specific and honest. Respond entirely in ${currentLangName}.
 
 Recommendations must be grounded in CrossFit programming principles — reference CrossFit movements, modalities (gymnastics, monostructural, weightlifting), rep schemes, and periodization concepts where relevant. Avoid generic fitness advice that could apply to any sport.
 
@@ -661,23 +671,23 @@ RECOMMENDATION OUTPUT — how many, and what shape:
 Let N = the number of items currently in activeCards.
 - Output max(1, 3 - N) NEW recommendations (type "new"). This is always at least 1, even when N is already 3 or more.
 - Fill any remaining slots, up to 3 total items, with commentary on existing active cards (type "commentary") — one item per card, prioritizing cards that are underperforming. If there are fewer active cards than remaining slots, output fewer than 3 items total rather than inventing extra commentary or extra new recommendations to pad the count.
-- Every "new" item needs exactly these seven fields:
-  - "headline_en" / "headline_es": a short, bold, actionable directive in each language — 8 words maximum, imperative voice (e.g. "Add One Dedicated Pulling Session Weekly").
-  - "diagnosticWhy_en" / "diagnosticWhy_es": exactly 2 sentences of data justification in each language — grounded in the actual numbers provided (weeklyBreakdown, sessionTable, patternDistribution, etc.), never invented, same rule as everywhere else in this prompt.
-  - "prescribedAction_en" / "prescribedAction_es": one short, concrete target string in each language for display in a highlighted prescription pill (e.g. "Pull-ups, Rows, or C2B x2 sessions").
-  - "category": exactly one of "PATTERN_IMBALANCE", "GOAL_ALIGNMENT", "LOAD_PERIODIZATION", "RECOVERY" — never invent a different category string. Written once — not a language-dependent field.
-  If — and only if — the recommendation is a specific, countable, weekly action, ALSO include "structuredTarget" (written once, not per-language) using ONE of these two shapes:
+- Every "new" item needs exactly these four fields:
+  - "headline": a short, bold, actionable directive — 8 words maximum, imperative voice (e.g. "Add One Dedicated Pulling Session Weekly").
+  - "diagnosticWhy": exactly 2 sentences of data justification — grounded in the actual numbers provided (weeklyBreakdown, sessionTable, patternDistribution, etc.), never invented, same rule as everywhere else in this prompt.
+  - "prescribedAction": one short, concrete target string for display in a highlighted prescription pill (e.g. "Pull-ups, Rows, or C2B x2 sessions").
+  - "category": exactly one of "PATTERN_IMBALANCE", "GOAL_ALIGNMENT", "LOAD_PERIODIZATION", "RECOVERY" — never invent a different category string.
+  If — and only if — the recommendation is a specific, countable, weekly action, ALSO include "structuredTarget" using ONE of these two shapes:
   - {"type":"movement_pattern_count","pattern":"<one of: pattern.squat, pattern.hinge, pattern.push, pattern.pull, pattern.olympic, pattern.core, pattern.carry, pattern.handstand, pattern.monostructural>","target":<integer, sessions per week>}
   - {"type":"weekly_session_consistency","target":<integer, sessions per week>,"tolerance":<integer, allowed deviation either direction>}
   Omit "structuredTarget" entirely for a recommendation that doesn't cleanly fit one of these two shapes (e.g. a duration- or pace-qualified suggestion) — do not force it into a shape that misrepresents it. The "pattern" value must be exactly one of the strings listed above — never invent a new one.
-- Every "commentary" item needs "text_en" / "text_es" (a short encouragement sentence in each language, not a full paragraph) and "targetCardId" (written once) set to the exact "id" of the activeCards entry it's about — never a card id that doesn't appear in activeCards.
+- Every "commentary" item needs "text" (a short encouragement sentence, not a full paragraph) and "targetCardId" set to the exact "id" of the activeCards entry it's about — never a card id that doesn't appear in activeCards.
 
 Even when training is going well, always find ways to improve, optimize or progress further within whatever recommendation budget the rule above allows. A good coach never just praises — they identify the next challenge, the weak link, or the next level to pursue. New recommendations should be forward-looking and concrete, not generic.
 
 CRITICAL — do not state a specific number (a range, a minimum, a maximum, a single session's value) unless it appears literally in the data provided. If you want to describe a spread or pattern across multiple data points, either read the actual values from sessionTable or describe it qualitatively (e.g. "varied considerably") rather than inventing a specific number.
 
 Return this exact JSON structure, no markdown, no backticks, no other text:
-{"summary_en":"2-3 sentences describing training pattern","summary_es":"same content in Spanish","goalAlignment_en":"1-2 sentences on goal alignment — honest assessment, not just praise","goalAlignment_es":"same content in Spanish","recovery_en":"1-2 sentences on recovery state","recovery_es":"same content in Spanish","recommendations":[{"type":"new","headline_en":"Short 8-word-max actionable directive","headline_es":"same in Spanish","diagnosticWhy_en":"Exactly two sentences of data justification.","diagnosticWhy_es":"same in Spanish","prescribedAction_en":"Concrete target for the prescription pill","prescribedAction_es":"same in Spanish","category":"PATTERN_IMBALANCE","structuredTarget":{"type":"movement_pattern_count","pattern":"pattern.pull","target":1}},{"type":"commentary","text_en":"short encouragement referencing an existing active card","text_es":"same in Spanish","targetCardId":"the exact id from activeCards"}]}`;
+{"summary":"2-3 sentences describing training pattern","goalAlignment":"1-2 sentences on goal alignment — honest assessment, not just praise","recovery":"1-2 sentences on recovery state","recommendations":[{"type":"new","headline":"Short 8-word-max actionable directive","diagnosticWhy":"Exactly two sentences of data justification.","prescribedAction":"Concrete target for the prescription pill","category":"PATTERN_IMBALANCE","structuredTarget":{"type":"movement_pattern_count","pattern":"pattern.pull","target":1}},{"type":"commentary","text":"short encouragement referencing an existing active card","targetCardId":"the exact id from activeCards"}]}`;
 
     const userPrompt = `Athlete goal: ${goalLabel}
 Fitness level: ${payload.profile.fitnessLevel}
@@ -734,33 +744,32 @@ ${payload.activeCards.length ? payload.activeCards.map(c => `  id "${c.id}": "${
     _processInsightRecommendations(result.recommendations || []);
 
     const cache = {
-      summary_en:       result.summary_en,
-      summary_es:       result.summary_es,
-      goalAlignment_en: result.goalAlignment_en,
-      goalAlignment_es: result.goalAlignment_es,
-      recovery_en:      result.recovery_en,
-      recovery_es:      result.recovery_es,
-      recommendations:  result.recommendations,
-      generatedAt:      new Date().toISOString(),
-      sessionCount:     hist.length,
-      goal:             currentGoal
+      summary:       result.summary,
+      goalAlignment: result.goalAlignment,
+      recovery:      result.recovery,
+      recommendations: result.recommendations,
+      generatedAt:   new Date().toISOString(),
+      sessionCount:  hist.length,
+      lang:          currentLang,
+      goal:          currentGoal
     };
 
     _insightCache = cache;
     localStorage.setItem(cacheKey, JSON.stringify(cache));
 
     // Save to Supabase profiles (reuse sb from JWT retrieval above).
-    // Single 'coaching_insight' column now, not split by language —
-    // this also fixes a pre-existing mismatch noticed in passing while
-    // building this: the pull side (sbStartupSync) already read
-    // prof.coaching_insight with no language suffix, while this push
-    // used to write coaching_insight_en/coaching_insight_es — the two
-    // never actually agreed on a column name. One unsuffixed column
-    // now matches what the pull side already expected.
+    // Back to a per-language column (coaching_insight_en/_es) — but
+    // this time actually fixing the mismatch this had before, rather
+    // than reintroducing it: the pull side (sbStartupSync,
+    // supabase-sync.js) previously read an unsuffixed
+    // prof.coaching_insight while this push wrote the suffixed
+    // version, so the two never agreed on a column name. Both sides
+    // now consistently use coaching_insight_en/coaching_insight_es.
     if (sb) {
       const { data: { session: sess2 } } = await sb.auth.getSession();
       if (sess2?.user) {
-        sb.from('profiles').upsert({ id: sess2.user.id, coaching_insight: cache, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+        const insightField = 'coaching_insight_' + currentLang;
+        sb.from('profiles').upsert({ id: sess2.user.id, [insightField]: cache, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       }
     }
 
@@ -829,14 +838,14 @@ function _renderInsightResult(cache, hist) {
   if (!card || !cache) return;
   card.style.display = 'block';
 
-  const firstSentence = _pickLang(cache, 'summary')?.split(/[.!?]/)[0] || '';
+  const firstSentence = cache.summary?.split(/[.!?]/)[0] || '';
   if (preview) preview.textContent = firstSentence + (firstSentence ? '.' : '');
 
   const updDate = cache.generatedAt ? new Date(cache.generatedAt).toLocaleDateString() : '';
   const histArr = hist || getHistory();
   const refreshDue = _insightRefreshDue(cache, histArr);
   const refreshBtn = refreshDue
-    ? `<button onclick="localStorage.removeItem('wod-insight-cache-'+(document.getElementById('global-goal')?.value||'general'));_insightCache=null;generateCoachingInsight(true);" style="background:var(--brand);color:white;border:none;border-radius:8px;padding:6px 14px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit;margin-top:10px;">${t('insight.refresh')}</button>`
+    ? `<button onclick="localStorage.removeItem('wod-insight-cache-'+(_lang==='es'?'es':'en')+'-'+(document.getElementById('global-goal')?.value||'general'));_insightCache=null;generateCoachingInsight(true);" style="background:var(--brand);color:white;border:none;border-radius:8px;padding:6px 14px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit;margin-top:10px;">${t('insight.refresh')}</button>`
     : '';
 
   if (content) content.innerHTML = `
@@ -845,15 +854,15 @@ function _renderInsightResult(cache, hist) {
     </div>
     <div style="margin-bottom:10px;">
       <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:3px;">${t('insight.summary')}</div>
-      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${_pickLang(cache, 'summary')}</div>
+      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${cache.summary}</div>
     </div>
     <div style="margin-bottom:10px;">
       <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:3px;">${t('insight.goal')}</div>
-      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${_pickLang(cache, 'goalAlignment')}</div>
+      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${cache.goalAlignment}</div>
     </div>
     <div style="margin-bottom:12px;">
       <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:3px;">${t('insight.recovery')}</div>
-      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${_pickLang(cache, 'recovery')}</div>
+      <div style="font-size:.76rem;color:var(--text);line-height:1.6;">${cache.recovery}</div>
     </div>
     ${(() => {
       // Only "new" recommendations that DIDN'T become a tracked card —
@@ -871,8 +880,8 @@ function _renderInsightResult(cache, hist) {
           <div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start;">
             <span style="color:var(--brand);font-weight:900;flex-shrink:0;">→</span>
             <div>
-              <div style="font-size:.76rem;color:var(--text);font-weight:700;line-height:1.4;">${_pickLang(r, 'headline')}</div>
-              ${_pickLang(r, 'diagnosticWhy') ? `<div style="font-size:.72rem;color:var(--label);line-height:1.4;margin-top:2px;">${_pickLang(r, 'diagnosticWhy')}</div>` : ''}
+              <div style="font-size:.76rem;color:var(--text);font-weight:700;line-height:1.4;">${r.headline || ''}</div>
+              ${r.diagnosticWhy ? `<div style="font-size:.72rem;color:var(--label);line-height:1.4;margin-top:2px;">${r.diagnosticWhy}</div>` : ''}
             </div>
           </div>`).join('')}
       </div>`;
@@ -939,15 +948,31 @@ function _renderActionCardsSection() {
   // time passes and new sessions get logged between insight cycles,
   // so a card's grid needs to reflect "as of right now" every time
   // this section is actually shown, not just whatever it looked like
-  // when the cache was last written.
+  // when the cache was last written. This runs on the FULL set,
+  // regardless of language — a card currently hidden by the language
+  // filter below still needs its weekly results kept current in the
+  // background, or it would silently stop being tracked the moment the
+  // athlete stopped viewing it in its own language.
   let cards = getActionCards();
   if (!cards.length) return '';
   cards = refreshActionCardResults(cards, getHistory());
   saveActionCards(cards);
 
+  // THE actual fix for the original mixing bug: only ever display
+  // cards whose lang matches the current display language — a card
+  // generated in the other language is simply hidden, never shown
+  // alongside these, rather than mixed in. A card with no lang at all
+  // (from before this field existed) is shown regardless — treating an
+  // unknown language as "never show" seems worse than the small chance
+  // of it displaying under the wrong language once, and older cards
+  // like this should get cleared out during this same update anyway.
+  const currentLang = _lang === 'es' ? 'es' : 'en';
+  const displayCards = cards.filter(c => !c.lang || c.lang === currentLang);
+  if (!displayCards.length) return '';
+
   return `<div style="border-top:0.5px solid var(--glass-border);padding-top:10px;margin-top:2px;">
     <div style="font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);margin-bottom:8px;">${t('insight.actioncards.title') || 'Action Cards'}</div>
-    ${cards.map(c => {
+    ${displayCards.map(c => {
       const weeksElapsed = c.weeklyResults.filter(w => w !== null).length;
       const catDisplay = CARD_CATEGORY_DISPLAY[c.category] || CARD_CATEGORY_DISPLAY.PATTERN_IMBALANCE;
       return `
@@ -956,11 +981,11 @@ function _renderActionCardsSection() {
           <span style="font-size:.65rem;font-weight:700;color:var(--label);">${catDisplay.icon} ${catDisplay.label}</span>
           <span style="font-size:.6rem;font-weight:700;color:var(--brand);background:var(--glass-inner);padding:2px 8px;border-radius:10px;">${t('insight.actioncards.weekof') || 'Week'} ${Math.min(weeksElapsed + 1, 6)} ${t('insight.actioncards.of') || 'of'} 6</span>
         </div>
-        <div style="font-size:.82rem;font-weight:800;color:var(--text);line-height:1.4;margin-bottom:4px;">${_pickLang(c, 'headline')}</div>
-        ${_pickLang(c, 'diagnosticWhy') ? `<div style="font-size:.72rem;color:var(--label);line-height:1.5;margin-bottom:8px;">${_pickLang(c, 'diagnosticWhy')}</div>` : ''}
-        ${_pickLang(c, 'prescribedAction') ? `<div style="font-size:.72rem;color:var(--brand);background:var(--glass-inner);border-radius:8px;padding:6px 10px;margin-bottom:10px;">💡 ${t('insight.actioncards.target') || 'Target'}: ${_pickLang(c, 'prescribedAction')}</div>` : ''}
+        <div style="font-size:.82rem;font-weight:800;color:var(--text);line-height:1.4;margin-bottom:4px;">${c.headline || ''}</div>
+        ${c.diagnosticWhy ? `<div style="font-size:.72rem;color:var(--label);line-height:1.5;margin-bottom:8px;">${c.diagnosticWhy}</div>` : ''}
+        ${c.prescribedAction ? `<div style="font-size:.72rem;color:var(--brand);background:var(--glass-inner);border-radius:8px;padding:6px 10px;margin-bottom:10px;">💡 ${t('insight.actioncards.target') || 'Target'}: ${c.prescribedAction}</div>` : ''}
         ${_renderActionCardWeekGrid(c)}
-        ${_pickLang(c, 'latestCommentary') ? `<div style="font-size:.7rem;color:var(--label);font-style:italic;margin-top:8px;line-height:1.4;">${_pickLang(c, 'latestCommentary')}</div>` : ''}
+        ${c.latestCommentary ? `<div style="font-size:.7rem;color:var(--label);font-style:italic;margin-top:8px;line-height:1.4;">${c.latestCommentary}</div>` : ''}
       </div>`;
     }).join('')}
   </div>`;
