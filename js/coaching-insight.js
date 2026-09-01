@@ -405,19 +405,12 @@ function _buildInsightPayload(hist) {
       const t = new Date(w.date).getTime();
       return t >= wStart && t < wEnd;
     });
-    // Overall Efficiency average for the week — only across sessions
-    // where it's actually computable (getEngineScoreERaw returns null
-    // for plenty of sessions; averaging over 0s would understate a
-    // week that had real efficiency data on some sessions and none on
-    // others, same reasoning as avgRl already excluding zero-RL rows).
-    const wEff = wSess.map(w => { try { return getEngineScoreERaw(w)?.eRaw; } catch(e) { return null; } }).filter(v => v != null && v > 0);
     weeklyBreakdown.push({
       week: 6 - i,
       sessions: wSess.length,
       avgPd:  wSess.length ? +(wSess.reduce((s,w) => s + (parseFloat(w.pd)||0), 0) / wSess.length).toFixed(2) : 0,
       avgFb:  wSess.length ? +(wSess.reduce((s,w) => s + (parseFloat(w.fb)||0), 0) / wSess.length).toFixed(0) : 0,
       avgRl:  (() => { const rlS = wSess.filter(w => parseFloat(w.rl) > 0); return rlS.length ? +(rlS.reduce((s,w) => s + (parseFloat(w.rl)||0), 0) / rlS.length).toFixed(0) : 0; })(),
-      avgEfficiency: wEff.length ? +(wEff.reduce((s,v) => s+v, 0) / wEff.length).toFixed(3) : null,
       totalMc:      +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc)||0),0)).toFixed(0),
       totalMcMech:  +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc_mech)||0),0)).toFixed(0),
       totalMcAero:  +(recent.filter(w => { const t=new Date(w.date).getTime(); return t>=wStart&&t<wEnd; }).reduce((s,w)=>s+(parseFloat(w.mc_aero)||0),0)).toFixed(0),
@@ -433,17 +426,12 @@ function _buildInsightPayload(hist) {
   // sessions over 6 weeks is small enough that sending all of them is
   // cheap, and removes the model's need to guess at a spread it can't
   // actually see.
-  const sessionTable = recent.map(w => {
-    let eff = null;
-    try { eff = getEngineScoreERaw(w)?.eRaw ?? null; } catch(e) {}
-    return {
-      date: (w.date || '').slice(0, 10),
-      fb: parseFloat(w.fb) || 0,
-      pd: parseFloat(w.pd) || 0,
-      rl: parseFloat(w.rl) || 0,
-      efficiency: eff != null ? +eff.toFixed(3) : null
-    };
-  });
+  const sessionTable = recent.map(w => ({
+    date: (w.date || '').slice(0, 10),
+    fb: parseFloat(w.fb) || 0,
+    pd: parseFloat(w.pd) || 0,
+    rl: parseFloat(w.rl) || 0
+  }));
 
   // RPE-vs-real-HR accuracy — only sessions with BOTH a real session-wide
   // avgHR AND a logged RPE qualify; per the athlete, that's 3 of 19
@@ -676,14 +664,13 @@ METRIC DEFINITIONS — interpret these correctly:
 - W/kg (pd): mechanical power output relative to bodyweight. Comparable only within similar session types — a 0.6 W/kg deadlift session and 0.6 W/kg metcon are very different. Higher is not always better.
 - Force Bias (fb): tonnage ÷ mechanical work. High (>120) = strength-dominant session, low (<60) = conditioning-dominant. Neither is inherently better — it describes session character, not quality.
 - Relative Loading (rl): the heaviest barbell effort in the session relative to 1RM — a peak, not an average across the session. Measures barbell intensity, NOT cardiovascular effort. High RL = heavy relative to max strength.
-- Efficiency (eRaw): mechanical work (or distance/reps for a pure-cardio session) divided by the session's total cardiovascular strain (MET-minutes) — how much output per unit of physiological cost. Trending up over the 6 weeks means the athlete is producing more for the same strain; trending down or flat is worth naming as a specific coaching point, not just described in passing. Only present for sessions where a MET-minutes estimate exists — a week with no efficiency value is missing data, not a zero.
 - Dominant modality: 'strength' = barbell-heavy sessions dominate, 'mixed' = combination of barbell and conditioning, 'conditioning' = cardio/metcon dominant. Mixed is not unfocused — it reflects CrossFit's broad stimulus.
 - CTL: aerobic cardiovascular chronic load (42-day average). Measures cardiovascular training base only. NOT overall training quality or strength. Do not recommend CTL targets for strength or power goals.
 - ATL: aerobic cardiovascular acute load (7-day average). Spikes after hard conditioning sessions.
 - Form (ATL÷CTL): ratio of recent to chronic aerobic load. >1.0 means recent aerobic load exceeds chronic baseline (fatigued aerobically). <1.0 means below baseline (fresh or detraining). 1.0 is neutral. Higher Form is NOT better for strength athletes.
 - Recovery data is 6-week trend data, NOT current state. The recovery section of your analysis should describe how the athlete has managed fatigue and recovery across the full period — were they consistently overreaching, detraining, or well-balanced? Structural variability shows how erratic their mechanical loading was week to week.
 - Pattern distribution: how many sessions in 6 weeks included each movement pattern. Imbalances (e.g. squat every week, no pull work) are coaching opportunities.
-- Per-session table (sessionTable): the actual session-by-session FB/PD/RL/efficiency values behind the weekly averages above. Use this for any claim about a range, spread, or specific session — e.g. "sessions ranged from X to Y" must be read directly off this table, never estimated or extrapolated from the weekly averages. If you state a minimum, maximum, or specific value, it must appear literally in this table.
+- Per-session table (sessionTable): the actual session-by-session FB/PD/RL values behind the weekly averages above. Use this for any claim about a range, spread, or specific session — e.g. "sessions ranged from X to Y" must be read directly off this table, never estimated or extrapolated from the weekly averages. If you state a minimum, maximum, or specific value, it must appear literally in this table.
 - RPE accuracy (rpeAccuracy): compares the athlete's self-rated RPE against real heart-rate-derived intensity, ONLY for sessions where both exist. sampleSize tells you how many sessions that is — if it's small (roughly under 5), treat any pattern here as a single observation worth watching, not an established finding, and say so explicitly rather than stating it as fact. If sampleSize is 0, do not mention RPE accuracy at all.
 - Active action cards (activeCards): recommendations from previous cycles the athlete is currently being tracked against, each with weeksElapsed (how many weeks of its 6-week window have been scored so far) and weeksMet (how many of those were on-target). This exists for exactly two purposes and nothing more: (1) do not generate a new recommendation that duplicates the intent of an existing active card, even worded differently — check the list before writing each new recommendation; (2) for a card that's underperforming (weeksMet meaningfully below weeksElapsed), write commentary that encourages following the existing action — do not reframe it, escalate it, or propose a different approach, just encourage adherence to what's already being tracked. Do not narrate a card's full history or speculate about why it isn't being hit.
 
@@ -719,9 +706,9 @@ Training (last 6 weeks):
 - Dominant modality: ${payload.training.dominantModality}
 - Consistency: ${payload.training.consistency}% of weeks had sessions
 - Weekly breakdown (week 1=oldest):
-${payload.training.weeklyBreakdown.map(w => `  Week ${w.week}: ${w.sessions} sessions, avg ${w.avgPd} W/kg, avg FB ${w.avgFb}, avg RL ${w.avgRl}%, avg Efficiency ${w.avgEfficiency ?? 'n/a'}`).join('\n')}
-- Per-session table (date, FB, W/kg, RL%, Efficiency) — the ONLY source for any claim about a specific session, range, minimum, or maximum:
-${payload.training.sessionTable.map(s => `  ${s.date}: FB ${s.fb}, ${s.pd} W/kg, RL ${s.rl}%, Efficiency ${s.efficiency ?? 'n/a'}`).join('\n')}
+${payload.training.weeklyBreakdown.map(w => `  Week ${w.week}: ${w.sessions} sessions, avg ${w.avgPd} W/kg, avg FB ${w.avgFb}, avg RL ${w.avgRl}%`).join('\n')}
+- Per-session table (date, FB, W/kg, RL%) — the ONLY source for any claim about a specific session, range, minimum, or maximum:
+${payload.training.sessionTable.map(s => `  ${s.date}: FB ${s.fb}, ${s.pd} W/kg, RL ${s.rl}%`).join('\n')}
 
 Recovery patterns (6-week view — not current state):
 - Aerobic trend: ${payload.recovery.aerobic.ctlTrend}, CTL change: ${payload.recovery.aerobic.ctlChange6w > 0 ? '+' : ''}${payload.recovery.aerobic.ctlChange6w}%, avg Form over period: ${payload.recovery.aerobic.avgForm}, days overreaching (Form>1.4): ${payload.recovery.aerobic.overreachingDays}, days detraining (Form<0.8): ${payload.recovery.aerobic.detrainingDays}
