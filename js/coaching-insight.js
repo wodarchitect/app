@@ -572,12 +572,32 @@ function _buildInsightPayload(hist) {
     // more elaborate (changing strategy on a repeatedly-missed card,
     // narrating a card's history) — settled scope, narrower than what
     // was originally proposed for this payload.
-    activeCards: refreshActionCardResults(getActionCards(), hist).map(c => ({
-      id: c.id,
-      text: c.headline || '',
-      weeksElapsed: c.weeklyResults.filter(w => w !== null).length,
-      weeksMet: c.weeklyResults.filter(w => w === true).length
-    })),
+    //
+    // Filtered to the CURRENT display language before the coach ever
+    // sees it — not just at render time. Two reasons: (1) the
+    // recommendation-count formula reads N = activeCards.length, and
+    // that needs to mean "how many cards can the athlete actually see
+    // right now," not a global cross-language total — otherwise a
+    // language switch can silently defeat the "always at least 3
+    // visible cards" floor (confirmed happening: switching to Spanish
+    // with 2 English cards already active produced only 1 new
+    // recommendation, leaving zero visible Spanish cards until that one
+    // generation, since N=2 counted cards the athlete couldn't see at
+    // all in Spanish). (2) There's little value showing the coach a
+    // card it can't write visible commentary for anyway — the
+    // commentary-application step already refuses to attach text to a
+    // card whose lang doesn't match the current generation, so a
+    // same-language activeCards list keeps what the coach is told in
+    // sync with what it can actually act on, not just what merely
+    // exists somewhere in storage.
+    activeCards: refreshActionCardResults(getActionCards(), hist)
+      .filter(c => !c.lang || c.lang === (_lang === 'es' ? 'es' : 'en'))
+      .map(c => ({
+        id: c.id,
+        text: c.headline || '',
+        weeksElapsed: c.weeklyResults.filter(w => w !== null).length,
+        weeksMet: c.weeklyResults.filter(w => w === true).length
+      })),
     recovery: {
       aerobic: {
         ctlTrend,
