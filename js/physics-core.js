@@ -467,6 +467,25 @@ function getCardioEnergy(blocks, bw) {
         addKcal(p.met * bw * (secs / 3600) * metFactor);
       } else if (cardioType === 'bike') {
         addKcal(totalReps * ref * metFactor);
+      } else if (cardioType === 'cycle') {
+        // Unlike bike (direct kcal from a console reading), cycle has a
+        // real distance — pace-sensitive MET via the same
+        // _cyclingMetBySpeed lookup _cardioInstanceMet uses, so a ride
+        // computed through this mixed-movement path and one computed
+        // through the single-cardio-block reconstruction path agree.
+        // No PR-pace estimate exists for cycling (same limitation as
+        // bike, see getSessionCardioInstances's own comment) — without
+        // a real captured/entered time, there's nothing to compute
+        // speed from, so this is correctly skipped rather than guessed.
+        if (realSecsLive != null) {
+          const distM = totalReps * ref;
+          const speedKmh = (distM / 1000) / (realSecsLive / 3600);
+          addKcal(_cyclingMetBySpeed(speedKmh) * bw * (realSecsLive / 3600) * metFactor);
+        } else if (useActualTime && actualSecs > 0) {
+          const distM = totalReps * ref;
+          const speedKmh = (distM / 1000) / (actualSecs / 3600);
+          addKcal(_cyclingMetBySpeed(speedKmh) * bw * (actualSecs / 3600) * metFactor);
+        }
       } else if (cardioType === 'du') {
         if (realSecsLive != null) { addKcal(p.met * bw * (realSecsLive / 3600) * metFactor); return; }
         if (!duRPM && !useActualTime) return;
@@ -554,6 +573,17 @@ function reconstructCardioEnergy(entry, bw) {
         if (secs) cardioKcal += p.met * bw * (secs / 3600) * metFactor;
       } else if (p.cardio === 'bike') {
         cardioKcal += totalReps * ref * metFactor;
+      } else if (p.cardio === 'cycle') {
+        // Same reasoning as the live-flow version of this same branch
+        // above (getLiveCardioKcal-equivalent) — pace-sensitive MET via
+        // _cyclingMetBySpeed when a real duration exists, correctly
+        // skipped otherwise since cycling has no PR-pace estimate to
+        // fall back on.
+        if (realSecs != null) {
+          const distM = totalReps * ref;
+          const speedKmh = (distM / 1000) / (realSecs / 3600);
+          cardioKcal += _cyclingMetBySpeed(speedKmh) * bw * (realSecs / 3600) * metFactor;
+        }
       } else if (p.cardio === 'du') {
         if (realSecs != null) { cardioKcal += p.met * bw * (realSecs / 3600) * metFactor; return; }
         if (!duRPM) return;

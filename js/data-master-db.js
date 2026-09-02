@@ -228,6 +228,20 @@ const MASTER_DB = {
   "Ski Erg (per 100m)":{bw:1,  dist:0.05, type:'bw', bias:'endurance', cx:1, met:11, cardio:'ski', cardioRef:100},
   "Assault Bike (per cal)":{bw:1, dist:0.05, type:'bw', bias:'endurance', cx:1, met:10, cardio:'bike', cardioRef:1},
   "Echo Bike (per cal)":{bw:1,   dist:0.05, type:'bw', bias:'endurance', cx:1, met:10, cardio:'bike', cardioRef:1},
+  // Deliberately its own cardio:'cycle' tag, NOT 'bike' — the existing
+  // 'bike' tag's whole formula (_cardioInstanceMet, physics-reconstruction.js)
+  // treats totalM as calories read directly off an Assault/Echo Bike's
+  // own console, reversing the standard kcal formula to solve for MET.
+  // Outdoor cycling's totalM is real distance in meters — sharing the
+  // 'bike' tag would silently feed meters through a formula built to
+  // expect calories, corrupting one or the other. met:8 here is a
+  // static fallback matching the Compendium's "12-13.9 mph, moderate
+  // effort" band — the real, pace-sensitive value comes from
+  // _cardioInstanceMet's own cardioType==='cycle' branch whenever
+  // actual speed is known, same relationship Run/Row already have
+  // between their own static met: default and their pace-sensitive
+  // real formula.
+  "Cycling (per 1km)":{bw:1, dist:0.05, type:'bw', bias:'endurance', cx:1, met:8, cardio:'cycle', cardioRef:1000},
   "Jump Rope (per 10 reps)":{bw:1, dist:.03, type:'bw', bias:'metabolic', cx:2, met:10, cardio:'du', cardioRef:10},
   "Wall-ball Shot":{bw:.5, dist:1.31, type:'wt', bias:'metabolic', cx:2},
 };

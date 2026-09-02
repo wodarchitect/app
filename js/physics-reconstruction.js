@@ -660,7 +660,7 @@ function getSessionCardioInstances(entry) {
       if (parsed) { r = parsed.r; x = parsed.x; }
     }
     const allMovements = block.movements || [];
-    const cardioMovements = allMovements.filter(mv => ['run', 'row', 'ski', 'du', 'bike'].includes(MASTER_DB[mv.name]?.cardio));
+    const cardioMovements = allMovements.filter(mv => ['run', 'row', 'ski', 'du', 'bike', 'cycle'].includes(MASTER_DB[mv.name]?.cardio));
     const isSingleCardioForTime = mode === 'fortime' && allMovements.length === 1 && cardioMovements.length === 1;
     if (isSingleCardioForTime) {
       const actualSec = (parseFloat(block.result?.m) || 0) * 60 + (parseFloat(block.result?.s) || 0);
@@ -697,7 +697,7 @@ function getSessionCardioInstances(entry) {
         ep = Math.max(0, ep - pres);
         reps = base + wf;
       }
-      if (!['run', 'row', 'ski', 'du', 'bike'].includes(cardioType)) return; // not a movement this function tracks time for
+      if (!['run', 'row', 'ski', 'du', 'bike', 'cycle'].includes(cardioType)) return; // not a movement this function tracks time for
       if (reps <= 0) return;
       const ref = p.cardioRef || 1;
       const perInstanceM = pres * ref;
@@ -809,6 +809,26 @@ function getHistoryCardioPaceMap(entry) {
 // Returns null when the instance's own formula can't produce a usable
 // MET (e.g. a zero/negative row split), matching each branch's
 // existing bail-out behavior.
+// Outdoor cycling MET by speed — 2024 Adult Compendium of Physical
+// Activities' published road-cycling categories (verified against the
+// actual source, not reconstructed from memory), converted from mph to
+// km/h. Deliberately a step lookup, not a fitted continuous curve like
+// Run/Row's ACSM-based formula — the Compendium itself is categorical,
+// not a smooth relationship (note the jump from 12.0 to 16.8 MET at
+// the top band, versus ~2-MET steps below it), so forcing a straight
+// line through these points would introduce error the source data
+// doesn't actually have. This is a fallback path (used only when no
+// real segment/HR data exists for the ride), so the lack of smooth
+// interpolation between bands is an accepted, deliberate tradeoff.
+function _cyclingMetBySpeed(speedKmh) {
+  if (speedKmh < 16.1) return 4.0;
+  if (speedKmh < 19.3) return 6.8;
+  if (speedKmh < 22.5) return 8.0;
+  if (speedKmh < 25.7) return 10.0;
+  if (speedKmh < 32.2) return 12.0;
+  return 16.8;
+}
+
 function _cardioInstanceMet(inst, bw, gender) {
   if (inst.secs <= 0 || inst.totalM <= 0) return null;
   if (inst.cardioType === 'run') {
@@ -829,6 +849,10 @@ function _cardioInstanceMet(inst, bw, gender) {
     // see getSessionCardioMetKcalByBlock's own comment for why bike
     // solves MET from a known kcal rather than the other way round.
     return inst.totalM / (bw * (inst.secs / 3600));
+  }
+  if (inst.cardioType === 'cycle') {
+    const speedKmh = (inst.totalM / 1000) / (inst.secs / 3600);
+    return _cyclingMetBySpeed(speedKmh);
   }
   return null;
 }

@@ -386,6 +386,22 @@ function simulatePlanSession(id) {
       else if (p.cardio === 'row') secs = estimateRowSecs(distM);
       else if (p.cardio === 'ski') secs = ski500 ? riegelSecs(ski500, 500, distM) : null;
       else if (p.cardio === 'bike') { planCardioKcal += totalReps * p.cardioRef * metFactor; return; }
+      else if (p.cardio === 'cycle') {
+        // Planning happens before the ride — there's no real pace to
+        // compute speed from the way the reconstruction-side functions
+        // do, so this uses the flat, static met: default from
+        // data-master-db.js (the Compendium's "moderate effort" band)
+        // rather than pretending to know a speed that doesn't exist
+        // yet. Same honest-estimate spirit as the rest of this planning
+        // module already has for prescribed-but-not-yet-run distances.
+        // hours = distance(km) / assumed planning pace(km/h) — verified
+        // numerically: a 20km ride at the assumed 20km/h pace correctly
+        // comes out to exactly 1 hour, not scaled by any further factor.
+        const assumedPaceKmh = 20;
+        const hours = (totalReps * p.cardioRef / 1000) / assumedPaceKmh;
+        planCardioKcal += p.met * bw * hours * metFactor;
+        return;
+      }
       else if (p.cardio === 'du') secs = duRPM > 0 ? (totalReps * p.cardioRef / duRPM) * 60 : null;
       if (secs) planCardioKcal += p.met * bw * (secs/3600) * metFactor;
     });
