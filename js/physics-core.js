@@ -1205,6 +1205,12 @@ function calculateGlobalPhysics() {
   const cardioResult = getCardioEnergy(document.querySelectorAll('.wod-block'), bwVal);
   const liveCardioByBlock = getLiveCardioKcalByBlock();
 
+  // Reset fresh at the start of every calculation, not lazily inside
+  // the loop below — a lazy `if (!window._lastBlockElevationGain)`
+  // init would only run on the very first calculation ever, leaving a
+  // stale value from a PRIOR calculation lingering if a block's
+  // elevation field was since cleared or the block's index shifted.
+  window._lastBlockElevationGain = {};
   document.querySelectorAll('.wod-block').forEach((block, idx) => {
     const mode = block.querySelector('.b-mode').value;
     let bM = 0, bS = 0;
@@ -1498,6 +1504,28 @@ function calculateGlobalPhysics() {
       }
     }
     ah += '</div>';
+
+    // Elevation gain — same additive treatment, same reasoning, as the
+    // saved-entry side (reconstructMechanicalWork) — see that
+    // function's comment for the full rationale. Read directly from
+    // this block's result-elevation-${idx} field, which only exists in
+    // the DOM when this block actually has a run/cycle movement (see
+    // the hasRunOrCycle check in the Analytics results accordion).
+    // Frozen into window._lastBlockElevationGain here, same "freeze at
+    // Calculate time, reuse at Save time" pattern as blockRpe/blockSegments
+    // elsewhere in this file — the DOM fields (and this whole accordion)
+    // may not exist anymore by the time the Save button is actually
+    // pressed, so save-time code re-reading them directly would find
+    // nothing.
+    const elevM = parseFloat(document.getElementById('result-elevation-' + idx)?.value) || 0;
+    if (elevM > 0) {
+      window._lastBlockElevationGain[idx] = elevM;
+      const elevWorkKJ = (bw * 9.81 * elevM) / 1000;
+      tw += elevWorkKJ;
+      twMechCost += elevWorkKJ;
+      blockMechCost[idx] = (blockMechCost[idx] || 0) + elevWorkKJ;
+      unloadedWorkKJ += elevWorkKJ;
+    }
   });
 
   // Duration-weighted session RPE — Phase 1 stopgap for per-block RPE:
@@ -1742,7 +1770,16 @@ function calculateGlobalPhysics() {
       const _hrrEl = document.getElementById('resHRR');
       let _hrrIsEstimate = false;
       if (_hrrEl) {
-        const _sessionHRForHRR = (typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null;
+        // Falls back to the manual per-block entries (same
+        // _getManualSessionHR used for window._lastSessionHR just
+        // below) whenever there are no real captured samples — this
+        // used to be its own separate, unpatched _hrStatsForRange call
+        // that never got that fallback, so a manually-entered Avg/Max
+        // HR still showed "(est.)" here even though the underlying
+        // number was genuinely real, just typed in rather than
+        // captured live. Same "manual data only matters when real data
+        // is absent" rule as everywhere else manual HR is used tonight.
+        const _sessionHRForHRR = ((typeof _hrStatsForRange === 'function') ? _hrStatsForRange(0, Date.now()) : null) || _getManualSessionHR(blockTimeList);
         const _hrRestVal = parseFloat(document.getElementById('global-hrrest')?.value) || null;
         const _hrMaxVal = parseFloat(document.getElementById('global-hrmax')?.value) || null;
         if (_sessionHRForHRR && _hrRestVal && _hrMaxVal && _hrMaxVal > _hrRestVal) {
@@ -2076,7 +2113,8 @@ function calculateGlobalPhysics() {
     const workRow = document.getElementById('resWorkEff-row');
     const runRow = document.getElementById('resRunEff-row');
     const duRow = document.getElementById('resDuEff-row');
-    const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null;
+    const cycleRow = document.getElementById('resCycleEff-row');
+    const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null || segmented.cycleEff != null;
     if (breakdownWrap) breakdownWrap.style.display = anySegmented ? '' : 'none';
     if (workRow) {
       workRow.style.display = segmented.workEff != null ? '' : 'none';
@@ -2103,6 +2141,15 @@ function calculateGlobalPhysics() {
         document.getElementById('resDuMetMin').textContent = Math.round(segmented.duMetMin);
         const duEstNote = document.getElementById('resDuEff-estnote');
         if (duEstNote) duEstNote.style.display = segmented.duIsEstimate ? '' : 'none';
+      }
+    }
+    if (cycleRow) {
+      cycleRow.style.display = segmented.cycleEff != null ? '' : 'none';
+      if (segmented.cycleEff != null) {
+        document.getElementById('resCycleEff').textContent = segmented.cycleEff.toFixed(1);
+        document.getElementById('resCycleMetMin').textContent = Math.round(segmented.cycleMetMin);
+        const cycleEstNote = document.getElementById('resCycleEff-estnote');
+        if (cycleEstNote) cycleEstNote.style.display = segmented.cycleIsEstimate ? '' : 'none';
       }
     }
   }

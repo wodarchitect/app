@@ -242,6 +242,19 @@ const MASTER_DB = {
   // between their own static met: default and their pace-sensitive
   // real formula.
   "Cycling (per 1km)":{bw:1, dist:0.05, type:'bw', bias:'endurance', cx:1, met:8, cardio:'cycle', cardioRef:1000},
+  // Uphill variants — mechanically IDENTICAL to their plain
+  // counterparts (same cardio type, same cardioRef, same MET formula
+  // and fallback). Their only real purpose is the `uphill:true` flag:
+  // it's what the Analytics results accordion checks to decide whether
+  // to show the Elevation Gain field for that block, and what
+  // getSegmentedEfficiency checks to decide whether Work Efficiency and
+  // this block's own cardio efficiency should share one MET-minutes
+  // denominator (see that function's own comment for the physics
+  // reasoning). Selecting one of these with no elevation entered
+  // behaves exactly like the plain movement — the flag only matters
+  // once real elevation data exists for that block.
+  "Run Uphill (per 100m)":{bw:1,  dist:0.08, type:'bw', bias:'endurance', cx:1, met:10, cardio:'run', cardioRef:100, uphill:true},
+  "Cycling Uphill (per 1km)":{bw:1, dist:0.05, type:'bw', bias:'endurance', cx:1, met:8, cardio:'cycle', cardioRef:1000, uphill:true},
   "Jump Rope (per 10 reps)":{bw:1, dist:.03, type:'bw', bias:'metabolic', cx:2, met:10, cardio:'du', cardioRef:10},
   "Wall-ball Shot":{bw:.5, dist:1.31, type:'wt', bias:'metabolic', cx:2},
 };

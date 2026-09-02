@@ -296,6 +296,11 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
   const rpe = window._lastComputedRPE || null;
   entry.rpe = rpe;
   entry.blockRpe = window._lastBlockRpeList || null;
+  // Elevation gain — same freeze-at-Calculate, reuse-at-Save pattern
+  // as blockRpe just above. An empty object (no blocks had elevation
+  // entered) is stored as null, not {} — consistent with how blockRpe
+  // itself is null rather than an empty array when nothing was set.
+  entry.blockElevationGain = (window._lastBlockElevationGain && Object.keys(window._lastBlockElevationGain).length) ? window._lastBlockElevationGain : null;
   // blockSegments — real per-segment HR data where captured (cardio
   // toggle + connected strap), falling back to whole-block HR or manual
   // RPE per _buildBlockSegments(). Reuses whatever was frozen into
@@ -1635,11 +1640,11 @@ function openHistoryModal(idx) {
         // movements: Overall still works from the total, but the
         // mechanical-specific split can't be attributed, see
         // getMechanicalSegmentMetMinutes's own reasoning).
-        let segmented = { workEff: null, runEff: null, duEff: null };
+        let segmented = { workEff: null, runEff: null, duEff: null, cycleEff: null };
         if (typeof getSegmentedEfficiency === 'function') {
           try { segmented = getSegmentedEfficiency(w); } catch (e) {}
         }
-        const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null;
+        const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null || segmented.cycleEff != null;
 
         return `${eRawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1659,6 +1664,7 @@ function openHistoryModal(idx) {
               ${segmented.workEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('result.workeff.title') || 'Work'}: <strong style="color:var(--text);">${segmented.workEff.toFixed(2)} kJ / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.workMetMin)} MET-min)</span>${segmented.workIsEstimate ? ' (est.)' : ''}</div>` : ''}
               ${segmented.runEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.runeraw.title') || 'Running'}: <strong style="color:var(--text);">${segmented.runEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.runMetMin)} MET-min)</span>${segmented.runIsEstimate ? ' (est.)' : ''}</div>` : ''}
               ${segmented.duEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.dueraw.title') || 'DU'}: <strong style="color:var(--text);">${segmented.duEff.toFixed(1)} reps / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.duMetMin)} MET-min)</span>${segmented.duIsEstimate ? ' (est.)' : ''}</div>` : ''}
+              ${segmented.cycleEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.cycleeraw.title') || 'Cycling'}: <strong style="color:var(--text);">${segmented.cycleEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.cycleMetMin)} MET-min)</span>${segmented.cycleIsEstimate ? ' (est.)' : ''}</div>` : ''}
             </div>
           </div>` : ''}
         </div>` : ''}

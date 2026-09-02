@@ -239,6 +239,29 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
       if (reps > 0) totalReps += reps;
       if (wt > 0) { loadedWorkKJ += work; } else { unloadedWorkKJ += work; }
     });
+
+    // Elevation gain — real gravitational potential energy work from
+    // climbing during a run/cycle block, additive to whatever the
+    // movement loop above already computed for this block (which is
+    // nothing, for a pure cardio block — cardio movements are skipped
+    // by the `if (!p || p.cardio) return;` check above). No eccentric
+    // 7/6 multiplier applied here, unlike barbell movements — climbing
+    // has no discrete lift/lower rep structure to credit a controlled
+    // descent for, so elevation contributes equally to totalWorkKJ and
+    // totalMechCostKJ.
+    const elevM = parseFloat((entry.blockElevationGain || {})[blockIndex]) || 0;
+    if (elevM > 0) {
+      const elevWorkKJ = (bw * 9.81 * elevM) / 1000;
+      totalWorkKJ += elevWorkKJ;
+      totalMechCostKJ += elevWorkKJ;
+      mechCostByBlock[blockIndex] = (mechCostByBlock[blockIndex] || 0) + elevWorkKJ;
+      // unloadedWorkKJ, not loadedWorkKJ — that split is specifically
+      // "external load vs none" (wt>0 vs wt===0 on a movement), and
+      // climbing is bodyweight-against-gravity with no external load
+      // at all, same category every other bodyweight-only movement
+      // (push-ups, air squats) already falls into.
+      unloadedWorkKJ += elevWorkKJ;
+    }
   });
 
   // Cardio's mechanical work — see getCardioWorkBreakdown() for the
@@ -367,7 +390,7 @@ function getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFact
 // uses the whole session's MET-minutes regardless of modality mix.
 function getSegmentedEfficiency(entry) {
   const bw = parseFloat(entry.bw) || 0;
-  if (!bw) return { workEff: null, runEff: null, duEff: null, workMetMin: null, runMetMin: null, duMetMin: null, runIsEstimate: false, duIsEstimate: false, workIsEstimate: false };
+  if (!bw) return { workEff: null, runEff: null, duEff: null, cycleEff: null, workMetMin: null, runMetMin: null, duMetMin: null, cycleMetMin: null, runIsEstimate: false, duIsEstimate: false, cycleIsEstimate: false, workIsEstimate: false };
   const age = parseInt(document.getElementById('global-age')?.value) || 30;
   const gender = document.getElementById('global-gender')?.value || 'male';
   const ageFactor = Math.max(0.60, 1 - Math.max(0, (age - 25) * 0.01));
@@ -379,27 +402,86 @@ function getSegmentedEfficiency(entry) {
   let mechMetMinutes = getMechanicalSegmentMetMinutes(entry, bw, vo2max, ageFactor, genderFactor);
   let workIsEstimate = false;
 
-  // Running/DU Efficiency now include PR-pace-estimated instances, not
-  // just real toggle-recorded ones — a session without a real toggle
-  // time shouldn't lose this metric entirely when every other cardio
-  // figure in the app (kcal, MET, %HRR) already falls back to a PR-pace
-  // estimate rather than going blank. runIsEstimate/duIsEstimate flag
-  // when ANY contributing instance was estimated, so the UI can label
-  // it accordingly rather than presenting an estimate as measured.
+  // Running/DU/Cycling Efficiency now include PR-pace-estimated
+  // instances, not just real toggle-recorded ones — a session without
+  // a real toggle time shouldn't lose this metric entirely when every
+  // other cardio figure in the app (kcal, MET, %HRR) already falls back
+  // to a PR-pace estimate rather than going blank. runIsEstimate/
+  // duIsEstimate/cycleIsEstimate flag when ANY contributing instance
+  // was estimated, so the UI can label it accordingly rather than
+  // presenting an estimate as measured.
   const { metMinutesByType, allRealByType } = getCardioTypeMetMinutes(entry, bw, gender);
-  let runM = 0, duReps = 0;
+  let runM = 0, duReps = 0, cycleM = 0;
   getSessionCardioInstances(entry).forEach(inst => {
     if (inst.cardioType === 'run') runM += inst.totalM;
     if (inst.cardioType === 'du') duReps += inst.totalM; // totalM is a rep count for DU, not meters
+    if (inst.cardioType === 'cycle') cycleM += inst.totalM;
   });
-  const runMetMinutes = metMinutesByType.run || 0;
-  const duMetMinutes = metMinutesByType.du || 0;
+  let runMetMinutes = metMinutesByType.run || 0;
+  let duMetMinutes = metMinutesByType.du || 0;
+  let cycleMetMinutes = metMinutesByType.cycle || 0;
+
+  // Uphill cardio with real elevation entered — Work Efficiency and
+  // this block's own cardio (run/cycle) efficiency share ONE
+  // denominator (the session's actual total MET-minutes) instead of
+  // the normal segmented/residual split below. The reasoning: climbing
+  // a hill DURING a run or ride isn't a separate mechanical block the
+  // way a deadlift set is — the same continuous minutes produced both
+  // the distance covered AND the elevation-derived work, so crediting
+  // some MET-minutes to "work" and subtracting that from what's left
+  // for "running" misrepresents one continuous effort as two
+  // sequential ones. This is a genuinely different situation from a
+  // mixed session (running THEN deadlifts in separate blocks), where
+  // the existing residual-split logic further below still correctly
+  // applies. Detected via the uphill:true flag on the movement's
+  // MASTER_DB entry (Run Uphill / Cycling Uphill), not by matching
+  // display text, and only takes effect when real, positive elevation
+  // was actually entered — selecting the Uphill variant but leaving
+  // elevation blank behaves identically to the plain movement.
+  //
+  // Simplification worth naming: if a session somehow mixed an uphill
+  // block with a separate flat block of the SAME cardio type (e.g. a
+  // flat "Run" block plus a separate "Run Uphill" block), this shares
+  // the denominator across that whole cardio type's combined
+  // MET-minutes, not just the uphill block's own share — splitting
+  // per-block would need getCardioTypeMetMinutes itself restructured
+  // to be block-aware, which isn't warranted for what's expected to be
+  // a rare combination.
+  let uphillCardioType = null;
+  (entry.blocks || []).forEach((block, blockIndex) => {
+    const elevM = parseFloat((entry.blockElevationGain || {})[blockIndex]) || 0;
+    if (elevM <= 0) return;
+    (block.movements || []).forEach(mv => {
+      const p = MASTER_DB[mv.name];
+      if (p && p.uphill && (p.cardio === 'run' || p.cardio === 'cycle')) uphillCardioType = p.cardio;
+    });
+  });
+
+  let sharedMetMinutes = null;
+  if (uphillCardioType && workKJ > 0) {
+    const cvResultForShare = getSessionCVEndurance(entry);
+    if (cvResultForShare && cvResultForShare.metMinutes > 0) {
+      sharedMetMinutes = cvResultForShare.metMinutes;
+      mechMetMinutes = sharedMetMinutes;
+      if (uphillCardioType === 'run') runMetMinutes = sharedMetMinutes;
+      if (uphillCardioType === 'cycle') cycleMetMinutes = sharedMetMinutes;
+      // workIsEstimate deliberately stays false here — this is the
+      // session's own directly-computed total MET-minutes (the exact
+      // figure Overall Efficiency already uses without an "(est.)"
+      // label), not a backed-into residual figure the way the
+      // fallback just below genuinely is.
+    }
+  }
+
   const runEff = (runM > 0 && runMetMinutes > 0) ? runM / runMetMinutes : null;
   const duEff = (duReps > 0 && duMetMinutes > 0) ? duReps / duMetMinutes : null;
+  const cycleEff = (cycleM > 0 && cycleMetMinutes > 0) ? cycleM / cycleMetMinutes : null;
   const runIsEstimate = runEff != null && allRealByType.run === false;
   const duIsEstimate = duEff != null && allRealByType.du === false;
+  const cycleIsEstimate = cycleEff != null && allRealByType.cycle === false;
 
-  // Residual fallback — only when the direct segment-level calculation
+  // Residual fallback — only when uphill sharing above didn't already
+  // resolve mechMetMinutes, and the direct segment-level calculation
   // above genuinely couldn't attribute anything despite real mechanical
   // work existing (workKJ > 0): a mixed block that never got real
   // per-segment HR falls back to one undifferentiated whole-block RPE
@@ -415,7 +497,7 @@ function getSegmentedEfficiency(entry) {
   // an estimate, since it genuinely is one — it's the same starting
   // number the excluded block's own RPE already blended together, just
   // read from the other direction.
-  if ((mechMetMinutes == null || mechMetMinutes <= 0) && workKJ > 0) {
+  if (sharedMetMinutes == null && (mechMetMinutes == null || mechMetMinutes <= 0) && workKJ > 0) {
     const cvResult = getSessionCVEndurance(entry);
     if (cvResult && cvResult.metMinutes > 0) {
       const residual = cvResult.metMinutes - runMetMinutes - duMetMinutes;
@@ -427,16 +509,17 @@ function getSegmentedEfficiency(entry) {
   // Raw MET-minute values, not just the derived efficiency ratios —
   // shown alongside each ratio in the UI so the segmented split itself
   // (how much of the session's total strain came from mechanical vs
-  // running vs DU specifically) is visible, not just its downstream
-  // effect on efficiency. null (not 0) whenever the matching
+  // running vs DU vs cycling specifically) is visible, not just its
+  // downstream effect on efficiency. null (not 0) whenever the matching
   // efficiency figure is also null, so the UI's existing "only show a
   // row when computable" check works for both without a separate one.
   return {
-    workEff, runEff, duEff,
+    workEff, runEff, duEff, cycleEff,
     workMetMin: workEff != null ? mechMetMinutes : null,
     runMetMin: runEff != null ? runMetMinutes : null,
     duMetMin: duEff != null ? duMetMinutes : null,
-    runIsEstimate, duIsEstimate, workIsEstimate: workEff != null && workIsEstimate
+    cycleMetMin: cycleEff != null ? cycleMetMinutes : null,
+    runIsEstimate, duIsEstimate, cycleIsEstimate, workIsEstimate
   };
 }
 
