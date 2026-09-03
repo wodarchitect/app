@@ -1316,6 +1316,16 @@ function renderAnalyticsResults() {
     });
   }
 
+  // Same capture, same reasoning, for Elevation Gain.
+  const existingElevationEls = container.querySelectorAll('[id^="result-elevation-"]');
+  if (existingElevationEls.length) {
+    window._savedAnalyticsElevation = {};
+    existingElevationEls.forEach(el => {
+      const idx = el.id.replace('result-elevation-', '');
+      window._savedAnalyticsElevation[idx] = el.value || null;
+    });
+  }
+
   // Preserve open state across re-renders
   const wasOpen = document.getElementById('analytics_results_acc')?.classList.contains('open');
 
@@ -1582,6 +1592,35 @@ function renderAnalyticsResults() {
       blockWrap.appendChild(manualHrWrap);
     }
 
+    // Elevation Gain — additive mechanical work from climbing (real
+    // gravitational potential energy, bw × 9.81 × elevation_m ÷ 1000),
+    // feeding directly into Work Efficiency and mc_mech (no eccentric
+    // 7/6 multiplier — climbing has no discrete lift/lower rep
+    // structure the way a barbell movement does, so there's nothing to
+    // credit). This is ADDITIVE to the block's cardio MET-minutes
+    // calculation, not a replacement for it — a hilly run/ride still
+    // contributes its full cardiovascular strain via HR/pace exactly as
+    // before; elevation is a second, separate contribution on top,
+    // making the block genuinely mixed-modality rather than switching
+    // it out of being cardio at all. Shown whenever this block has a
+    // run or cycle movement, independent of whether the manual HR
+    // fields above are showing — elevation is relevant regardless of
+    // whether real HR exists for the block.
+    const blockMovements = [...block.querySelectorAll('.movement-block')];
+    const hasUphillCardio = blockMovements.some(mv => {
+      const name = mv.querySelector('input[type="hidden"]')?.value || '';
+      return MASTER_DB[name]?.uphill === true;
+    });
+    if (hasUphillCardio) {
+      const elevWrap = document.createElement('div');
+      elevWrap.style.cssText = 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
+      elevWrap.innerHTML = `
+        <div style="font-size:.68rem;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${t('result.elevation.title') || 'Elevation Gain (optional)'}</div>
+        <div style="font-size:.66rem;color:var(--label);margin-bottom:8px;line-height:1.4;">${t('result.elevation.sub') || 'Total climbing (not net change) — from a watch, bike computer, or app like Strava, in meters.'}</div>
+        <input type="number" id="result-elevation-${i}" placeholder="${t('result.elevation.placeholder') || 'Elevation gain (m)'}" min="0" style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.8rem;font-family:inherit;">`;
+      blockWrap.appendChild(elevWrap);
+    }
+
     body.appendChild(blockWrap);
 
     // Restore this block's manual HR entries across a rebuild, same
@@ -1599,6 +1638,13 @@ function renderAnalyticsResults() {
       const maxEl = document.getElementById('result-manualhr-max-' + i);
       if (avgEl && saved.avg != null) avgEl.value = saved.avg;
       if (maxEl && saved.max != null) maxEl.value = saved.max;
+    }
+
+    // Same restore, same "must run after body.appendChild" reasoning,
+    // for Elevation Gain.
+    if (hasUphillCardio && window._savedAnalyticsElevation && window._savedAnalyticsElevation[i] != null) {
+      const elevEl = document.getElementById('result-elevation-' + i);
+      if (elevEl) elevEl.value = window._savedAnalyticsElevation[i];
     }
 
     // Restore this block's RPE value/touched-state captured before this
