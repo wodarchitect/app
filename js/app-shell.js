@@ -54,13 +54,22 @@ function switchTab(idx) {
     _lastRenderedDate = new Date().toDateString();
     renderAnalytics();
     renderAnalyticsResults();
-    // Ensure the session-signature radar canvas reflects the current theme —
-    // renderAnalyticsResults() only redraws it when the Builder has active blocks,
-    // so without this it can retain stale colours from a theme switched on another tab.
-    if (window._lastRadarRaw) {
-      const r = window._lastRadarRaw;
+    // Refreshes the radar chart AND the 6 benchmark bars from the
+    // actual most-recently-saved history entry — not just re-coloring
+    // whatever window._lastRadarRaw happened to hold. That variable
+    // only ever gets set by the live Builder's "Calculate Physics"
+    // button, which isn't necessarily the same thing as what's
+    // currently saved: an earlier iteration before the final save, or
+    // even a different workout tested earlier in the same page
+    // session, could leave it showing something that doesn't match the
+    // actual saved data at all. getHistory()[0] is always the true
+    // most recent entry (hist.unshift(entry) on save), the same source
+    // the History Modal already reads correctly for these same
+    // numbers — this makes the two agree.
+    const hist = getHistory();
+    if (hist.length) {
+      renderAllBMBars(hist[0]);
       const backVisible = document.getElementById('radar-flip-back')?.style.display === 'block';
-      renderRadarChart(r.pd, r.wd, r.cvIntensity, r.fb, r.internalLoad, r.td);
       if (backVisible) {
         document.getElementById('radar-flip-front').style.display = 'none';
         document.getElementById('radar-flip-back').style.display = 'block';

@@ -859,7 +859,29 @@ function renderBMBar(containerId, metric, value, exp) {
     </div>`;
 }
 
-function renderAllBMBars() {
+// sourceEntry (optional): when provided, values are computed FRESH
+// from this saved history entry (same pattern the History Modal
+// already uses correctly — getSessionPower/getSessionCVEndurance on
+// the entry, parseFloat on its stored wd/mc/fb/rl/td fields) instead
+// of reading live-flow DOM text and window._lastCVEndurance. Without
+// it, behavior is unchanged from before — reads whatever the Builder's
+// results panel currently shows, correct for "here's what you just
+// calculated, before saving."
+//
+// This distinction matters because, before sourceEntry existed, this
+// function was the ONLY thing that ever populated this section, and it
+// was called from exactly one place: right after calculateGlobalPhysics
+// finishes in the live Builder flow. Switching to the Analytics tab
+// never re-ran it — confirmed by tracing every call site. So this
+// "most recent session" snapshot could silently show stale data: an
+// earlier, since-superseded calculation from the same page session, or
+// even a completely different workout being tested earlier, rather
+// than the session that's actually most recently saved. Passing
+// getHistory()[0] as sourceEntry from the Analytics tab-switch handler
+// (see app-shell.js) fixes that — it always re-derives fresh from
+// whatever's genuinely saved, the same way the History Modal already
+// does for the identical numbers.
+function renderAllBMBars(sourceEntry) {
   if (!hasEnoughHistory()) {
     // Clear all benchmark bars and show nothing (no misleading fixed ranges)
     ['bm-pd','bm-wd','bm-mc','bm-fb','bm-rl','bm-aeropd'].forEach(id => {
@@ -890,23 +912,39 @@ function renderAllBMBars() {
   if (msg) msg.innerHTML = '';
   const exp  = document.getElementById('global-exp')?.value  || 'intermediate';
   const goal = document.getElementById('global-goal')?.value || 'conditioning';
-  const pd = parseFloat(document.getElementById('resPD')?.innerText);
-  const wd = parseFloat(document.getElementById('resWD')?.innerText);
-  const mc = parseFloat(document.getElementById('resMC')?.innerText);
-  const fb = parseFloat(document.getElementById('resFB')?.innerText);
-  const rl = parseFloat(document.getElementById('resRL')?.innerText);
-  const td = parseFloat(document.getElementById('resTD')?.innerText);
+
+  let pd, wd, mc, fb, rl, td, cvResult;
+  if (sourceEntry) {
+    const power = getSessionPower(sourceEntry);
+    pd = power ? power.total : (parseFloat(sourceEntry.pd) || 0);
+    wd = parseFloat(sourceEntry.wd) || 0;
+    mc = parseFloat(sourceEntry.mc) || 0;
+    fb = parseFloat(sourceEntry.fb) || 0;
+    rl = parseFloat(sourceEntry.rl) || 0;
+    td = parseFloat(sourceEntry.td) || 0;
+    cvResult = getSessionCVEndurance(sourceEntry);
+  } else {
+    pd = parseFloat(document.getElementById('resPD')?.innerText);
+    wd = parseFloat(document.getElementById('resWD')?.innerText);
+    mc = parseFloat(document.getElementById('resMC')?.innerText);
+    fb = parseFloat(document.getElementById('resFB')?.innerText);
+    rl = parseFloat(document.getElementById('resRL')?.innerText);
+    td = parseFloat(document.getElementById('resTD')?.innerText);
+    cvResult = window._lastCVEndurance;
+  }
+
   renderBMBar('bm-pd', 'totalpower', pd, exp);
   renderBMBar('bm-wd', 'wd', wd, exp);
   renderBMBar('bm-mc', 'mc', mc, exp);
   renderBMBar('bm-fb', 'fb', fb, exp);
   if (!isNaN(rl)) renderBMBar('bm-rl', 'rl', rl, exp);
   const tdForRadar = isNaN(td) ? 0 : td;
-  const cvIntensity = window._lastCVEndurance ? window._lastCVEndurance.met : 0;
+  const cvIntensity = cvResult ? cvResult.met : 0;
   if (cvIntensity > 0) renderBMBar('bm-aeropd', 'cvintensity', cvIntensity, exp);
-  const internalLoad = window._lastCVEndurance ? window._lastCVEndurance.metMinutes : 0;
+  const internalLoad = cvResult ? cvResult.metMinutes : 0;
   renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, tdForRadar);
   window._lastRadarRaw = { pd, wd, cvIntensity, fb, internalLoad, td: tdForRadar };
+  window._lastCVEndurance = cvResult || null;
 }
 
 function getTDLabel(score) {
@@ -2104,7 +2142,25 @@ function calculateGlobalPhysics() {
           // different function, getLiveCVEndurance, which already has
           // direct access to blockRpeList) computed successfully.
           rpe: window._lastComputedRPE,
-          blockRpe: window._lastBlockRpeList
+          blockRpe: window._lastBlockRpeList,
+          // Same reasoning, same failure mode, caught the same way —
+          // getSegmentedEfficiency's uphill-detection loop reads
+          // entry.blockElevationGain directly to decide whether Work
+          // Efficiency and this block's cardio efficiency should share
+          // ONE denominator instead of the normal segmented split (see
+          // that function's own comment). Without this field on the
+          // preview object, that loop can never find any elevation data
+          // here even when real elevation was entered and IS correctly
+          // feeding the live workKJ/metMinutes elsewhere in this same
+          // calculation — so the shared-denominator fix silently never
+          // activated in the live flow, leaving Cycling/Running
+          // Efficiency showing the old, purely pace-based denominator
+          // while Overall Efficiency (sourced from window._lastCVEndurance,
+          // which DOES see the real elevation value directly) correctly
+          // reflected it — the two disagreeing on the same session's
+          // MET-minutes was the actual bug, confirmed via a 155-vs-94
+          // mismatch on a real simulated ride.
+          blockElevationGain: window._lastBlockElevationGain
         };
         segmented = getSegmentedEfficiency(previewEntryForSegmented);
       } catch (e) { console.error('[segmented efficiency] getSegmentedEfficiency threw in live flow:', e); }

@@ -1005,31 +1005,48 @@ function getSessionCVEndurance(entry) {
   blockList.forEach((blockData, blockIndex) => {
     if (!blockData) return;
     const blockMinutes = (blockData.timeSec || 0) / 60;
-    if (blockData.isPureCardio) {
-      const blockCardio = blockCardioKcal[blockIndex] || 0;
-      cvKcal += blockCardio;
-      if (bw && blockMinutes > 0) metMinutes += (blockCardio / (bw * (blockMinutes / 60) * ageFactor)) * blockMinutes;
-      return;
-    }
-    // Prefer real per-segment data (entry.blockSegments) over the
-    // block-level RPE-only reconstruction below whenever it's actually
-    // available for this block — calling the exact same
-    // _computeBlockOverheadAndCV the live flow already uses, not a
-    // second implementation that could drift from it. This is what
-    // makes Overall Efficiency consistent with the segmented Work/
-    // Running/DU Efficiency metrics, which already use this same real
-    // per-segment data: before this, a block with real HR showing
-    // higher intensity than its own self-rated RPE would silently
-    // understate Overall's denominator relative to the segmented one,
-    // making a component look more "costly" than the whole it's part
-    // of — not possible once both read from the same source.
+
+    // Real per-segment HR data (entry.blockSegments, source:'hr_segment'
+    // specifically — NOT the generic manual_rpe fallback, which exists
+    // for every session regardless of whether real HR was ever
+    // captured, and must keep using the pace-based isPureCardio
+    // shortcut below unchanged) takes priority over BOTH the
+    // isPureCardio shortcut AND the block-level RPE-only reconstruction
+    // — checked first, not last. isPureCardio (reconstructBlockMovementData)
+    // classifies purely by movement type ("is every movement in this
+    // block cardio-tagged?"), which says nothing about whether real HR
+    // data or elevation-derived mechanical work exists for that block —
+    // a cycling block with real manual HR and real elevation gain is
+    // still "isPureCardio" by that definition, so without this
+    // reordering, real measured data for the block was being silently
+    // discarded in favor of a flat, pace-only estimate that has no way
+    // to know about the hill, or about the athlete's actual measured
+    // effort, at all. Confirmed via a real simulated ride: Overall
+    // Efficiency's own live MET-minutes (which DOES use real HR, via a
+    // separate code path) showed 155; this reconstruction path showed
+    // 94 for the identical saved session, purely because it took the
+    // isPureCardio shortcut and never looked at entry.blockSegments in
+    // the first place.
+    //
+    // Calls the exact same _computeBlockOverheadAndCV the live flow
+    // already uses, not a second implementation that could drift from
+    // it — this is also what keeps Overall Efficiency consistent with
+    // the segmented Work/Running/DU/Cycling Efficiency metrics, which
+    // already read this same real per-segment data.
     const segsForBlock = Array.isArray(entry.blockSegments) ? entry.blockSegments[blockIndex] : null;
-    if (Array.isArray(segsForBlock) && segsForBlock.length && vo2max > 0) {
+    const hasRealHRSeg = Array.isArray(segsForBlock) && segsForBlock.some(s => s && s.source === 'hr_segment');
+    if (hasRealHRSeg && vo2max > 0) {
       const blockMechKcal = Object.values(blockData.patternKcal || {}).reduce((a, b) => a + b, 0);
       const blockCardio = blockCardioKcal[blockIndex] || 0;
       const result = _computeBlockOverheadAndCV(segsForBlock, blockMechKcal, blockCardio, bw, vo2max, ageFactor, genderFactor, hrRestVal, hrMaxVal);
       cvKcal += result.cv;
       if (bw && blockMinutes > 0) metMinutes += (result.cv / (bw * (blockMinutes / 60) * ageFactor * genderFactor)) * blockMinutes;
+      return;
+    }
+    if (blockData.isPureCardio) {
+      const blockCardio = blockCardioKcal[blockIndex] || 0;
+      cvKcal += blockCardio;
+      if (bw && blockMinutes > 0) metMinutes += (blockCardio / (bw * (blockMinutes / 60) * ageFactor)) * blockMinutes;
       return;
     }
     // Fallback — no entry.blockSegments for this block (session saved
@@ -1094,7 +1111,25 @@ function getLiveCVEndurance(blockMechCostList, blockTimeSecList, blockTotalMetEs
     const other = Object.values(cardioResultByBlock[idx] || {}).reduce((a, b) => a + b, 0);
     const blockCardio = runRow + other;
     if (blockCardio > 0) anyCardio = true;
-    const isPureCardio = blockCardio > 0 && !(blockMechCostList[idx] > 0);
+    // Real per-segment HR data (window._lastBlockSegments, source:
+    // 'hr_segment' specifically — not the generic manual_rpe fallback,
+    // which exists for every session regardless of whether real HR was
+    // ever captured, and must keep using this pace-only shortcut
+    // unchanged) disqualifies the isPureCardio shortcut, same
+    // reordering and same reasoning as getSessionCVEndurance's identical
+    // fix — a block can be "isPureCardio" by movement type alone
+    // (blockMechCostList[idx] being 0, e.g. no elevation entered) while
+    // still having real manual or live HR data that should take
+    // priority over the flat, pace-only blockCardio figure.
+    // blockTotalMetEstimateList[idx] is already computed from that real
+    // segment data upstream (via _computeBlockOverheadAndCV, in
+    // calculateGlobalPhysics) regardless of this block's isPureCardio
+    // status, so using it here whenever a real HR segment exists costs
+    // nothing extra — the number is already sitting there waiting to be
+    // used correctly.
+    const segsForIdx = window._lastBlockSegments?.[idx];
+    const hasRealHRSeg = Array.isArray(segsForIdx) && segsForIdx.some(s => s && s.source === 'hr_segment');
+    const isPureCardio = blockCardio > 0 && !(blockMechCostList[idx] > 0) && !hasRealHRSeg;
     const blockMinutes = (blockTimeSecList[idx] || 0) / 60;
     if (isPureCardio) {
       cvKcal += blockCardio;
