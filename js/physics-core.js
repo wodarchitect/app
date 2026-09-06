@@ -1243,12 +1243,21 @@ function calculateGlobalPhysics() {
   const cardioResult = getCardioEnergy(document.querySelectorAll('.wod-block'), bwVal);
   const liveCardioByBlock = getLiveCardioKcalByBlock();
 
-  // Reset fresh at the start of every calculation, not lazily inside
-  // the loop below — a lazy `if (!window._lastBlockElevationGain)`
-  // init would only run on the very first calculation ever, leaving a
-  // stale value from a PRIOR calculation lingering if a block's
-  // elevation field was since cleared or the block's index shifted.
-  window._lastBlockElevationGain = {};
+  // Initialized once, lazily — NOT reset unconditionally on every call
+  // the way an earlier version of this did. That blanket reset was
+  // itself the cause of a real, confirmed bug: pressing "Calculate
+  // Physics" a second time within the same session, after the
+  // Analytics results accordion had been rebuilt or was momentarily not
+  // showing a given block's elevation field, read that absence as
+  // "elevation is now 0" and wiped an already-correct, previously-
+  // frozen value before the athlete ever reached Save — a saved entry
+  // showed zero mechanical work despite a correct live calculation
+  // moments earlier. The per-block logic below now handles staleness
+  // correctly at the right granularity instead: a field that exists and
+  // reads empty clears that specific index (the athlete actually
+  // cleared it), while a field that's simply absent from the DOM right
+  // now leaves whatever was already frozen for that index alone.
+  if (!window._lastBlockElevationGain) window._lastBlockElevationGain = {};
   document.querySelectorAll('.wod-block').forEach((block, idx) => {
     const mode = block.querySelector('.b-mode').value;
     let bM = 0, bS = 0;
@@ -1548,16 +1557,47 @@ function calculateGlobalPhysics() {
     // function's comment for the full rationale. Read directly from
     // this block's result-elevation-${idx} field, which only exists in
     // the DOM when this block actually has a run/cycle movement (see
-    // the hasRunOrCycle check in the Analytics results accordion).
+    // the hasUphillCardio check in the Analytics results accordion).
     // Frozen into window._lastBlockElevationGain here, same "freeze at
     // Calculate time, reuse at Save time" pattern as blockRpe/blockSegments
     // elsewhere in this file — the DOM fields (and this whole accordion)
     // may not exist anymore by the time the Save button is actually
     // pressed, so save-time code re-reading them directly would find
     // nothing.
-    const elevM = parseFloat(document.getElementById('result-elevation-' + idx)?.value) || 0;
-    if (elevM > 0) {
-      window._lastBlockElevationGain[idx] = elevM;
+    //
+    // Distinguishes "the field exists and reads empty/zero" (the
+    // athlete actually cleared it — respect that, clear the frozen
+    // value too) from "the field doesn't exist in the DOM at all right
+    // now" (leave whatever was already frozen for this block alone).
+    // Confirmed causing a real bug: this function can run more than
+    // once per session (pressing "Calculate Physics" again after
+    // reviewing results) — if the Analytics results accordion happened
+    // to not have this specific field present on a later call (e.g. a
+    // rebuild that occurred between calculations), the naive version of
+    // this code below read that as "elevation is now 0" and wiped out
+    // an already-correct, previously-frozen value before the athlete
+    // ever got to Save — confirmed via a real session where the saved
+    // entry showed zero mechanical work despite a correct live-flow
+    // calculation just before it.
+    const elevEl = document.getElementById('result-elevation-' + idx);
+    if (elevEl) {
+      const elevM = parseFloat(elevEl.value) || 0;
+      if (elevM > 0) {
+        window._lastBlockElevationGain[idx] = elevM;
+        const elevWorkKJ = (bw * 9.81 * elevM) / 1000;
+        tw += elevWorkKJ;
+        twMechCost += elevWorkKJ;
+        blockMechCost[idx] = (blockMechCost[idx] || 0) + elevWorkKJ;
+        unloadedWorkKJ += elevWorkKJ;
+      } else {
+        delete window._lastBlockElevationGain[idx];
+      }
+    } else if (window._lastBlockElevationGain[idx] > 0) {
+      // Field not present in the DOM this time, but a real value was
+      // already frozen from an earlier calculation this session — still
+      // apply it to this run's totals too, so the live display stays
+      // consistent with what will actually be saved.
+      const elevM = window._lastBlockElevationGain[idx];
       const elevWorkKJ = (bw * 9.81 * elevM) / 1000;
       tw += elevWorkKJ;
       twMechCost += elevWorkKJ;
