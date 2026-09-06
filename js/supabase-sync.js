@@ -357,6 +357,7 @@ async function sbSyncAll() {
       mechanical_work_kj: w.mechanicalWorkKJ != null ? w.mechanicalWorkKJ : null,
       cardio_strain_met_min: w.cardioStrainMetMin != null ? w.cardioStrainMetMin : null,
       block_segments: w.blockSegments || null,
+      block_elevation_gain: w.blockElevationGain || null,
       rest_segments: w.restSegments || null,
       avg_hr: w.avgHR != null ? w.avgHR : null,
       max_hr: w.maxHR != null ? w.maxHR : null,
@@ -484,6 +485,7 @@ async function sbPushHistoryEntry(entry, uid, sb) {
     mechanical_work_kj: entry.mechanicalWorkKJ != null ? entry.mechanicalWorkKJ : null,
     cardio_strain_met_min: entry.cardioStrainMetMin != null ? entry.cardioStrainMetMin : null,
     block_segments: entry.blockSegments || null,
+    block_elevation_gain: entry.blockElevationGain || null,
     rest_segments: entry.restSegments || null,
     avg_hr: entry.avgHR != null ? entry.avgHR : null,
     max_hr: entry.maxHR != null ? entry.maxHR : null,
@@ -607,6 +609,7 @@ async function sbStartupSync(uid) {
         mechanicalWorkKJ: r.mechanical_work_kj != null ? r.mechanical_work_kj : null,
         cardioStrainMetMin: r.cardio_strain_met_min != null ? r.cardio_strain_met_min : null,
         blockSegments: r.block_segments != null ? r.block_segments : null,
+        blockElevationGain: r.block_elevation_gain != null ? r.block_elevation_gain : null,
         restSegments: r.rest_segments != null ? r.rest_segments : null,
         avgHR: r.avg_hr != null ? r.avg_hr : null,
         maxHR: r.max_hr != null ? r.max_hr : null,
@@ -1098,6 +1101,7 @@ async function _finishSbSave(wodLabel, e) {
   const rpe = window._lastComputedRPE || null;
   entry.rpe = rpe;
   entry.blockRpe = window._lastBlockRpeList || null;
+  entry.blockElevationGain = (window._lastBlockElevationGain && Object.keys(window._lastBlockElevationGain).length) ? window._lastBlockElevationGain : null;
   // Reuses window._lastBlockSegments frozen at Calculate time
   // (physics-core.js), not a fresh _buildAllBlockSegments() call — same
   // fix as history.js's save path, for the same reason: any HR samples
@@ -1198,6 +1202,7 @@ async function _finishSbSave(wodLabel, e) {
     mechanical_work_kj: entry.mechanicalWorkKJ != null ? entry.mechanicalWorkKJ : null,
     cardio_strain_met_min: entry.cardioStrainMetMin != null ? entry.cardioStrainMetMin : null,
     block_segments: entry.blockSegments || null,
+    block_elevation_gain: entry.blockElevationGain || null,
     rest_segments: entry.restSegments || null,
     avg_hr: entry.avgHR != null ? entry.avgHR : null,
     max_hr: entry.maxHR != null ? entry.maxHR : null,
@@ -1301,6 +1306,7 @@ async function sbSaveToCloud() {
       mechanical_work_kj: w.mechanicalWorkKJ != null ? w.mechanicalWorkKJ : null,
       cardio_strain_met_min: w.cardioStrainMetMin != null ? w.cardioStrainMetMin : null,
       block_segments: w.blockSegments || null,
+      block_elevation_gain: w.blockElevationGain || null,
       rest_segments: w.restSegments || null,
       avg_hr: w.avgHR != null ? w.avgHR : null,
       max_hr: w.maxHR != null ? w.maxHR : null,
@@ -1449,6 +1455,7 @@ async function sbLoadFromCloud() {
         mechanicalWorkKJ: r.mechanical_work_kj != null ? r.mechanical_work_kj : (local.mechanicalWorkKJ != null ? local.mechanicalWorkKJ : null),
         cardioStrainMetMin: r.cardio_strain_met_min != null ? r.cardio_strain_met_min : (local.cardioStrainMetMin != null ? local.cardioStrainMetMin : null),
         blockSegments: r.block_segments != null ? r.block_segments : (local.blockSegments != null ? local.blockSegments : null),
+        blockElevationGain: r.block_elevation_gain != null ? r.block_elevation_gain : (local.blockElevationGain != null ? local.blockElevationGain : null),
         restSegments: r.rest_segments != null ? r.rest_segments : (local.restSegments != null ? local.restSegments : null),
         avgHR: r.avg_hr != null ? r.avg_hr : (local.avgHR != null ? local.avgHR : null),
         maxHR: r.max_hr != null ? r.max_hr : (local.maxHR != null ? local.maxHR : null),
