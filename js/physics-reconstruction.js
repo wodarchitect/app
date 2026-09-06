@@ -370,16 +370,39 @@ function getSessionCategory(entry) {
   return 'pure_cardio';
 }
 
-function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
+// ModalityClass is based on real external work output, not a telemetry
+// tag — Row/Ski have real W_ext and count as MIXED; Run/DU/Cycle have
+// zero W_ext by deliberate decision (or, for flat cycling, simply
+// never produce any — see reconstructMechanicalWork's elevation
+// comment: a flat ride has nothing for that function to compute at
+// all) and count as LOCO, using a throughput measure instead of work
+// for their efficiency ratio.
+//
+// LOCO further splits into LOCO_RUN (distance-based, m/s), LOCO_CYCLE
+// (distance-based, m/s — added when Cycling support was built, kept
+// as its own branch rather than merged into LOCO_RUN since the two
+// should never be silently combined into one number), and LOCO_DU
+// (rep-based, reps/s) — these are different units (or, for Run vs
+// Cycle, the same unit but a different activity) and must never be
+// compared against each other without being explicit about it. Run is
+// checked before Cycle, which is checked before DU — an arbitrary but
+// deterministic tiebreak, matching getEngineScoreERaw's own priority
+// order, for the rare session that somehow has more than one.
+function getEngineScoreModalityClass(workKJ, hasRunDistance, hasCycleDistance, hasDuReps) {
   if (workKJ > 0) return 'MIXED';
   if (hasRunDistance) return 'LOCO_RUN';
+  if (hasCycleDistance) return 'LOCO_CYCLE';
   if (hasDuReps) return 'LOCO_DU';
   return null; // neither present — can't classify at all
 }
 
 // ══ eRaw calculation (Session Coverage Workbench) ══
-// eRaw (MIXED, W_ext > 0):        W_ext (kJ) / Cardio Strain (MET-min)
-// eRaw (LOCO_RUN, distance > 0):  Distance (m) / Cardio Strain (MET-min)
+// eRaw (MIXED, W_ext > 0):         W_ext (kJ) / Cardio Strain (MET-min)
+// eRaw (LOCO_RUN, distance > 0):   Distance (m) / Cardio Strain (MET-min)
+// eRaw (LOCO_CYCLE, distance > 0): Distance (m) / Cardio Strain (MET-min)
+//   — added alongside Cycling support; kept as its own modality rather
+//   than merged into LOCO_RUN so the two are never silently combined,
+//   even though they share the same unit and formula.
 // eRaw (LOCO_DU, reps > 0):       Reps / Cardio Strain (MET-min) — not
 //   part of the two archetypes the athlete specified (Hybrid/Strength,
 //   Pure Cardio-by-distance); extended the same distance/MET-min pattern
@@ -608,7 +631,19 @@ function getEngineScoreERaw(entry) {
   const bw = parseFloat(entry.bw) || 0;
   const totalSec = parseFloat(entry.duration_sec) || 0;
 
-  if (!bw || !totalSec) return null;
+  // totalSec is NOT actually used anywhere in this function's own
+  // calculations (eRaw comes from workKJ/runMeters/cycleMeters/duReps
+  // divided by cvResult.metMinutes, never from totalSec), and nothing
+  // downstream ever reads it off the returned object either — confirmed
+  // by checking every call site in the codebase. It was still gating
+  // the whole function via `if (!bw || !totalSec) return null`, which
+  // meant a session whose separate, redundant entry.duration_sec field
+  // happened to be missing or zero — even with a perfectly valid bw,
+  // real cardio distance, and a working cvResult — silently lost its
+  // entire Overall Efficiency hero card, and (until the History Modal's
+  // own nesting was separately fixed) its segmented breakdown along
+  // with it, for no real reason. Only bw is actually required here.
+  if (!bw) return null;
 
   const cvResult = getSessionCVEndurance(entry);
   if (!cvResult || !cvResult.met || !cvResult.metMinutes) return null; // no Average METs or Cardio Strain available — can't compute any branch
@@ -629,12 +664,13 @@ function getEngineScoreERaw(entry) {
   const usingSensorWork = entry.vbtUsed && entry.vbt_work_kj != null && entry.vbt_work_kj > 0;
   const workKJ = usingSensorWork ? entry.vbt_work_kj : workKJEstimated;
 
-  let runMeters = 0, runSec = 0, duReps = 0, duSec = 0;
+  let runMeters = 0, runSec = 0, cycleMeters = 0, cycleSec = 0, duReps = 0, duSec = 0;
   getSessionCardioInstances(entry).forEach(inst => {
     if (inst.cardioType === 'run') { runMeters += inst.totalM; runSec += inst.secs; }
+    if (inst.cardioType === 'cycle') { cycleMeters += inst.totalM; cycleSec += inst.secs; }
     if (inst.cardioType === 'du') { duReps += inst.totalM; duSec += inst.secs; } // totalM is a rep count for DU, not meters
   });
-  const modality = getEngineScoreModalityClass(workKJ, runMeters > 0 && runSec > 0, duReps > 0 && duSec > 0);
+  const modality = getEngineScoreModalityClass(workKJ, runMeters > 0 && runSec > 0, cycleMeters > 0 && cycleSec > 0, duReps > 0 && duSec > 0);
   if (!modality) return null; // nothing measurable at all
 
   if (modality === 'MIXED') {
@@ -644,6 +680,9 @@ function getEngineScoreERaw(entry) {
   }
   if (modality === 'LOCO_RUN') {
     return { eRaw: runMeters / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
+  }
+  if (modality === 'LOCO_CYCLE') {
+    return { eRaw: cycleMeters / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
   }
   // LOCO_DU
   return { eRaw: duReps / cvResult.metMinutes, modality, forceBias: null, totalSec, workKJ, workKJEstimated, usingSensorWork, metMinutes: cvResult.metMinutes };
@@ -663,6 +702,9 @@ function getERawDisplay(entry) {
   }
   if (r.modality === 'LOCO_RUN') {
     return { value: r.eRaw, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} meters of distance.` };
+  }
+  if (r.modality === 'LOCO_CYCLE') {
+    return { value: r.eRaw, unitLabel: 'm / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} meters of cycling distance.` };
   }
   // LOCO_DU — not one of the two specified archetypes; same pattern, reps instead of meters.
   return { value: r.eRaw, unitLabel: 'reps / MET-min', sentence: `Every MET-min yielded ${r.eRaw.toFixed(1)} reps.` };
