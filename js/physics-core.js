@@ -1982,7 +1982,14 @@ function calculateGlobalPhysics() {
     // label now that this sits under a visual bar rather than being the
     // only representation of the breakdown.
     const dotRow = (color, label, value) => `<div style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span><span style="color:var(--label);">${label} <span style="color:var(--text);font-weight:700;">${value}</span></span></div>`;
-    if (cardioKcal > 0 || overheadKcalDisp > 0 || overheadPending || overheadNoVO2) {
+    // mechKcal > 0 included here (not just cardioKcal/overhead) — a
+    // purely mechanical session (barbell/gymnastics only, no cardio
+    // movement at all) was falling through to the final else branch
+    // below, hiding this whole breakdown entirely and leaving the
+    // headline number with no label at all explaining what it actually
+    // consists of. A session that's 100% mechanical still deserves a
+    // "Mech X kcal" line, same as one that's mixed or 100% aerobic.
+    if (mechKcal > 0 || cardioKcal > 0 || overheadKcalDisp > 0 || overheadPending || overheadNoVO2) {
       let rows = [dotRow('#FF6B35', 'Mech', `${mechKcal} kcal`), dotRow('#22C55E', 'Aero', `${cardioKcal} kcal`)];
       if (overheadKcalDisp > 0) rows.push(dotRow('#3B82F6', overheadLabelText, `${overheadKcalDisp} kcal`));
       if (overheadPending) rows.push(dotRow('#3B82F6', `${t('overhead.pending.1')} ${sessionsNeeded} ${t('overhead.pending.2')}`, ''));
