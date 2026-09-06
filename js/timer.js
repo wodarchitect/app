@@ -94,7 +94,26 @@ async function _hrSubscribe(device) {
     const hr = _hrParseValue(event.target.value);
     const valEl = document.getElementById('hr-card-value');
     if (valEl) valEl.innerText = hr;
-    window._hrSamples.push({ ts: Date.now(), bpm: hr });
+    // Only recorded while an actual timer session is running — this
+    // listener fires for every reading the whole time the device stays
+    // connected, which is not the same thing as "a workout is in
+    // progress." Confirmed causing a real, serious bug: if the app
+    // crashes/reloads mid-session (e.g. a network error) and the HR
+    // monitor auto-reconnects afterward (see the comment on
+    // reconnection below), readings taken while the athlete is just
+    // sitting there manually re-entering the lost session's results —
+    // not working out at all — were being pushed into window._hrSamples
+    // just the same as real, during-workout readings. Since the app's
+    // "does real HR data exist" check is just "is window._hrSamples
+    // non-empty," this caused the app to treat clearly-irrelevant,
+    // misleadingly low post-crash readings as if they were the actual
+    // session's HR — instead of correctly falling back to the RPE-based
+    // estimate the way it should whenever the real session data was
+    // genuinely lost. isRunning is false immediately after any page
+    // reload (module-level state resets to its declared default) and
+    // only becomes true again when the athlete explicitly starts a new
+    // timer session — exactly the distinction needed here.
+    if (isRunning) window._hrSamples.push({ ts: Date.now(), bpm: hr });
     _hrUpdateStatsDisplay();
   });
 }
