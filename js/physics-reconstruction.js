@@ -290,6 +290,86 @@ function reconstructMechanicalWork(entry, bw, hMetres) {
 // comparing apples to oranges. Distance takes priority if a session has
 // both real running and DU — matches getEngineScoreERaw's own priority
 // order.
+// ══ Session Category classification (Engine Frontier filter chips) ══
+// Six mutually-exclusive, fully-automatic categories, derived purely
+// from what's already stored on the entry — no new user input, no
+// manual tagging. Detected at the MOVEMENT level (MASTER_DB lookups
+// per movement in every block), not from aggregate fields like wd —
+// wd now includes elevation and erg work too, so "wd > 0" alone can't
+// distinguish a Metcon from a solo Uphill ride or a solo row: those
+// are equally real mechanical work, just not from a barbell/gymnastics
+// movement, which is what this classification actually cares about.
+//
+// Decision order matters and is deliberate — see the conversation this
+// taxonomy was designed in for the full reasoning behind each tier:
+// 1. Metcon: real mechanical work (any load type — barbell, bodyweight,
+//    dumbbell; "it's all CrossFit" was the explicit call here) AND any
+//    cardio component at all (flat run/cycle, erg, uphill, or DU).
+// 2. Also Metcon: mechanical work, no cardio, but Force Bias <= 120 —
+//    a gymnastics/bodyweight-only session folded in here rather than
+//    given its own category, since its low-load character reads
+//    closer to a metcon than a barbell day.
+// 3. Strength: mechanical work, no cardio, Force Bias > 120 — the
+//    same >120 = strength-dominant threshold already established
+//    elsewhere in the app (AI Coach metric definitions).
+// 4. Running Uphill / 5. Cycling Uphill: an uphill run/cycle movement
+//    with real, positive elevation entered for that block, no
+//    mechanical work otherwise. Uphill-with-zero-elevation behaves
+//    identically to the plain movement, so it does NOT count here —
+//    matches getSegmentedEfficiency's own uphill-detection rule
+//    exactly. Running checked before Cycling as an arbitrary but
+//    deterministic tiebreak for the rare session with both.
+// 6. Erg Cardio: row, ski, or indoor bike (Assault/Echo) only, no
+//    mechanical work, no uphill — separated from Pure Cardio because
+//    Row/Ski have real, physics-grounded mechanical work (the same
+//    Concept2 watts formula validated earlier), and a standalone,
+//    continuous, no-rest erg session structurally out-produces a
+//    metcon's average W/kg for the same reason a solo uphill ride
+//    does — checked before falling through to Pure Cardio, so a
+//    mixed Row+flat-Run session (no barbell) lands here, not there.
+// 7. Pure Cardio: flat run/cycle and/or DU only — nothing else. DU
+//    lands here rather than its own category since it currently
+//    contributes zero validated mechanical work, same limitation flat
+//    running has (see getCardioWorkBreakdown's own comment on why
+//    Run/DU were excluded from the validated work carve-out).
+function getSessionCategory(entry) {
+  let hasMechanicalWork = false;
+  let hasUphillRun = false, hasUphillCycle = false;
+  let hasErgCardio = false, hasFlatCardio = false, hasDU = false;
+
+  (entry.blocks || []).forEach((block, blockIndex) => {
+    (block.movements || []).forEach(mv => {
+      const p = MASTER_DB[mv.name];
+      if (!p) return;
+      if (!p.cardio) { hasMechanicalWork = true; return; }
+      if (p.cardio === 'run' || p.cardio === 'cycle') {
+        const elevM = parseFloat((entry.blockElevationGain || {})[blockIndex]) || 0;
+        if (p.uphill && elevM > 0) {
+          if (p.cardio === 'run') hasUphillRun = true; else hasUphillCycle = true;
+        } else {
+          hasFlatCardio = true;
+        }
+      } else if (p.cardio === 'row' || p.cardio === 'ski' || p.cardio === 'bike') {
+        hasErgCardio = true;
+      } else if (p.cardio === 'du') {
+        hasDU = true;
+      }
+    });
+  });
+
+  const hasAnyCardio = hasUphillRun || hasUphillCycle || hasErgCardio || hasFlatCardio || hasDU;
+
+  if (hasMechanicalWork && hasAnyCardio) return 'metcon';
+  if (hasMechanicalWork) {
+    const fb = parseFloat(entry.fb) || 0;
+    return fb > 120 ? 'strength' : 'metcon';
+  }
+  if (hasUphillRun) return 'run_uphill';
+  if (hasUphillCycle) return 'cycle_uphill';
+  if (hasErgCardio) return 'erg_cardio';
+  return 'pure_cardio';
+}
+
 function getEngineScoreModalityClass(workKJ, hasRunDistance, hasDuReps) {
   if (workKJ > 0) return 'MIXED';
   if (hasRunDistance) return 'LOCO_RUN';

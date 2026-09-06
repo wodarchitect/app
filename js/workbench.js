@@ -1605,6 +1605,54 @@ function openFbDurationFullscreen() {
   }
 }
 
+// Category filter chips — six toggleable pills above the Engine
+// Frontier fullscreen chart. Kept out of the compact card entirely
+// (see openPowerScatterFullscreen's own reasoning) since that card has
+// a whole-card onclick to open fullscreen — an interactive chip inside
+// it would also trigger that navigation on tap, which isn't what
+// toggling a filter should do.
+const SESSION_CATEGORY_LABELS = {
+  metcon: 'chart.category.metcon',
+  strength: 'chart.category.strength',
+  run_uphill: 'chart.category.runuphill',
+  cycle_uphill: 'chart.category.cycleuphill',
+  erg_cardio: 'chart.category.ergcardio',
+  pure_cardio: 'chart.category.purecardio'
+};
+
+function _buildCategoryFilterChipsHtml() {
+  if (!window._psActiveCategories) {
+    window._psActiveCategories = new Set(Object.keys(SESSION_CATEGORY_LABELS));
+  }
+  return `<div id="ps-category-chips" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 10px;">
+    ${Object.entries(SESSION_CATEGORY_LABELS).map(([cat, key]) => {
+      const active = window._psActiveCategories.has(cat);
+      return `<button onclick="_toggleCategoryFilter('${cat}')" style="padding:5px 11px;border-radius:14px;font-size:.66rem;font-weight:700;font-family:inherit;cursor:pointer;border:1px solid ${active ? 'var(--brand)' : 'var(--glass-border)'};background:${active ? 'var(--brand)' : 'transparent'};color:${active ? '#fff' : 'var(--label)'};">${t(key) || cat}</button>`;
+    }).join('')}
+  </div>`;
+}
+
+// Toggling to zero categories would leave the chart with nothing to
+// show and no way back except re-tapping the same chip that just
+// emptied it — refusing the toggle when exactly one category remains
+// active keeps at least one chip always selected, same principle as a
+// radio group that shouldn't allow deselecting its last option.
+function _toggleCategoryFilter(category) {
+  if (!window._psActiveCategories) {
+    window._psActiveCategories = new Set(Object.keys(SESSION_CATEGORY_LABELS));
+  }
+  const active = window._psActiveCategories;
+  if (active.has(category)) {
+    if (active.size === 1) return;
+    active.delete(category);
+  } else {
+    active.add(category);
+  }
+  const chipsWrap = document.getElementById('ps-category-chips');
+  if (chipsWrap) chipsWrap.outerHTML = _buildCategoryFilterChipsHtml();
+  renderPowerScatterChart('chart-power-scatter-fs');
+}
+
 function openPowerScatterFullscreen() {
   const fs = document.getElementById('chart-fullscreen');
   document.getElementById('chart-fs-title').textContent = `${t('chart.powerscatter.x')} / ${t('chart.powerscatter.y')}`;
@@ -1621,6 +1669,7 @@ function openPowerScatterFullscreen() {
     <div style="display:flex;justify-content:flex-end;padding:12px 20px 0;">
       <button onclick="_powerScatterResetZoom()" style="width:auto;margin:0;box-sizing:border-box;padding:6px 12px;border-radius:6px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text);font-size:.66rem;font-weight:700;">↺ Reset Zoom</button>
     </div>
+    ${_buildCategoryFilterChipsHtml()}
     <div style="position:relative;height:340px;padding:12px 20px 0;"><canvas id="chart-power-scatter-fs"></canvas></div>
     <div id="ps-insight-card" style="display:none;margin:16px 20px 0;padding:12px 14px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;"></div>`;
 

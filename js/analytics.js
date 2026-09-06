@@ -361,7 +361,7 @@ function renderPowerScatterChart(canvasId) {
   if (chartInstances[instKey]) { try { chartInstances[instKey].destroy(); } catch(e) {} }
 
   const hist = getHistory();
-  const points = hist
+  const allPoints = hist
     .map(w => {
       const mech = getSessionPower(w);
       const aero = getSessionCVEndurance(w);
@@ -382,6 +382,7 @@ function renderPowerScatterChart(canvasId) {
         allReal: aero.allReal,
         label: w.label || 'Session',
         date: (w.date || '').slice(0, 10),
+        category: getSessionCategory(w),
         // Needed by the insight grid's Efficiency at Load column —
         // eRaw isn't derivable from x/y alone (it needs the entry's own
         // mechanical work in kJ, not the W/kg power value plotted
@@ -392,6 +393,21 @@ function renderPowerScatterChart(canvasId) {
       };
     })
     .filter(Boolean);
+
+  // Category filter chips — window._psActiveCategories persists across
+  // re-renders (theme switch, zoom reset, tab revisit) so a chosen
+  // filter combination survives until the athlete explicitly changes
+  // it. Defaults to all six selected — filtering is opt-in, never a
+  // silent default that hides sessions the athlete didn't ask to hide.
+  // Named `points` (not `filteredPoints`) deliberately — every line
+  // below this already refers to `points`, and renaming this single
+  // binding means the whole rest of the function (chart data, frontier
+  // envelope, default selection, insight card) automatically operates
+  // on the filtered set with no other line needing to change.
+  if (!window._psActiveCategories) {
+    window._psActiveCategories = new Set(['metcon', 'strength', 'run_uphill', 'cycle_uphill', 'erg_cardio', 'pure_cardio']);
+  }
+  const points = allPoints.filter(p => window._psActiveCategories.has(p.category));
 
   const isDark = document.body.classList.contains('dark');
   const gc = isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.05)';
