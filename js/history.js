@@ -1646,6 +1646,21 @@ function openHistoryModal(idx) {
         }
         const anySegmented = segmented.workEff != null || segmented.runEff != null || segmented.duEff != null || segmented.cycleEff != null;
 
+        // Segmented-breakdown inner content built once, reused two ways
+        // below — appended inside the Overall Efficiency card (one
+        // unified card, the original look) when both exist, or wrapped
+        // in its own standalone card when eRawDisplay alone is missing
+        // (getEngineScoreERaw failed but getSegmentedEfficiency still
+        // could — see that function's own comment on why this can
+        // happen). Two independent top-level cards regardless of case
+        // was a real visual regression from splitting them apart to fix
+        // the null-eRawDisplay case — this restores "one card when both
+        // are present" while keeping the fallback intact.
+        const segmentedInner = anySegmented ? `${segmented.workEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('result.workeff.title') || 'Work'}: <strong style="color:var(--text);">${segmented.workEff.toFixed(2)} kJ / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.workMetMin)} MET-min)</span>${segmented.workIsEstimate ? ' (est.)' : ''}</div>` : ''}
+            ${segmented.runEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.runeraw.title') || 'Running'}: <strong style="color:var(--text);">${segmented.runEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.runMetMin)} MET-min)</span>${segmented.runIsEstimate ? ' (est.)' : ''}</div>` : ''}
+            ${segmented.duEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.dueraw.title') || 'DU'}: <strong style="color:var(--text);">${segmented.duEff.toFixed(1)} reps / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.duMetMin)} MET-min)</span>${segmented.duIsEstimate ? ' (est.)' : ''}</div>` : ''}
+            ${segmented.cycleEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.cycleeraw.title') || 'Cycling'}: <strong style="color:var(--text);">${segmented.cycleEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.cycleMetMin)} MET-min)</span>${segmented.cycleIsEstimate ? ' (est.)' : ''}</div>` : ''}` : '';
+
         return `${eRawDisplay ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span class="unit" style="margin-bottom:0;">${t('hist.modal.eraw.title') || 'Overall Efficiency'}</span>
@@ -1658,16 +1673,18 @@ function openHistoryModal(idx) {
             </div>
             <div style="font-size:.72rem;color:var(--text);text-align:right;max-width:240px;line-height:1.4;">${eRawDisplay.sentence}</div>
           </div>
-        </div>` : ''}
-        ${anySegmented ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
+          ${anySegmented ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--glass-border);">
+            <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">${t('result.segmented.breakdown') || 'Segmented Breakdown'}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              ${segmentedInner}
+            </div>
+          </div>` : ''}
+        </div>` : (anySegmented ? `<div class="metric-card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.95) 100%);border-left:4px solid #FF6B00;box-shadow:none;">
           <div style="font-size:.6rem;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">${t('result.segmented.breakdown') || 'Segmented Breakdown'}</div>
           <div style="display:flex;flex-direction:column;gap:6px;">
-            ${segmented.workEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('result.workeff.title') || 'Work'}: <strong style="color:var(--text);">${segmented.workEff.toFixed(2)} kJ / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.workMetMin)} MET-min)</span>${segmented.workIsEstimate ? ' (est.)' : ''}</div>` : ''}
-            ${segmented.runEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.runeraw.title') || 'Running'}: <strong style="color:var(--text);">${segmented.runEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.runMetMin)} MET-min)</span>${segmented.runIsEstimate ? ' (est.)' : ''}</div>` : ''}
-            ${segmented.duEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.dueraw.title') || 'DU'}: <strong style="color:var(--text);">${segmented.duEff.toFixed(1)} reps / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.duMetMin)} MET-min)</span>${segmented.duIsEstimate ? ' (est.)' : ''}</div>` : ''}
-            ${segmented.cycleEff != null ? `<div style="font-size:.78rem;color:var(--label);">${t('hist.modal.cycleeraw.title') || 'Cycling'}: <strong style="color:var(--text);">${segmented.cycleEff.toFixed(1)} m / MET-min</strong> <span style="color:var(--label);">(${Math.round(segmented.cycleMetMin)} MET-min)</span>${segmented.cycleIsEstimate ? ' (est.)' : ''}</div>` : ''}
+            ${segmentedInner}
           </div>
-        </div>` : ''}
+        </div>` : '')}
         <div class="grid-2" style="gap:10px;">
           <div class="metric-card" style="${noAccent}">
             <span class="unit">${t('result.total.power')}</span>
