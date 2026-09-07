@@ -445,15 +445,26 @@ function renderPowerScatterChart(canvasId) {
   // Category filter chips — window._psActiveCategories persists across
   // re-renders (theme switch, zoom reset, tab revisit) so a chosen
   // filter combination survives until the athlete explicitly changes
-  // it. Defaults to all six selected — filtering is opt-in, never a
-  // silent default that hides sessions the athlete didn't ask to hide.
-  // Named `points` (not `filteredPoints`) deliberately — every line
-  // below this already refers to `points`, and renaming this single
-  // binding means the whole rest of the function (chart data, frontier
-  // envelope, default selection, insight card) automatically operates
-  // on the filtered set with no other line needing to change.
+  // it. Defaults to Metcon only — the Frontier's whole comparative
+  // premise (mechanical power sustained under real cardiovascular
+  // strain) is specifically a CrossFit-metcon question; Strength/Uphill/
+  // Erg/Pure-Cardio sessions are structurally different shapes of effort
+  // that were split into their own categories precisely so they
+  // wouldn't get compared against a metcon's average by default (see
+  // the conversation this taxonomy was designed in — a solo uphill ride
+  // or erg piece has no rest/transitions to dilute its average power,
+  // so it structurally out-produces a metcon on this exact chart even
+  // though it isn't a more "powerful" effort in any meaningful sense).
+  // Still fully opt-in from here — every other category remains one tap
+  // away via the chips, this only changes what's shown before the
+  // athlete has made any choice at all. Named `points` (not
+  // `filteredPoints`) deliberately — every line below this already
+  // refers to `points`, and renaming this single binding means the
+  // whole rest of the function (chart data, frontier envelope, default
+  // selection, insight card) automatically operates on the filtered set
+  // with no other line needing to change.
   if (!window._psActiveCategories) {
-    window._psActiveCategories = new Set(['metcon', 'strength', 'run_uphill', 'cycle_uphill', 'erg_cardio', 'pure_cardio']);
+    window._psActiveCategories = new Set(['metcon']);
   }
   const points = allPoints.filter(p => window._psActiveCategories.has(p.category));
 

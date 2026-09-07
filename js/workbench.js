@@ -1621,8 +1621,13 @@ const SESSION_CATEGORY_LABELS = {
 };
 
 function _buildCategoryFilterChipsHtml() {
+  // Same "Metcon-only by default" reasoning as analytics.js's own
+  // renderPowerScatterChart — see that function's comment for the full
+  // rationale. Kept consistent across both places this default gets
+  // initialized so a fresh session lands on the same starting filter
+  // regardless of which code path runs first.
   if (!window._psActiveCategories) {
-    window._psActiveCategories = new Set(Object.keys(SESSION_CATEGORY_LABELS));
+    window._psActiveCategories = new Set(['metcon']);
   }
   return `<div id="ps-category-chips" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 10px;">
     ${Object.entries(SESSION_CATEGORY_LABELS).map(([cat, key]) => {
@@ -1638,8 +1643,11 @@ function _buildCategoryFilterChipsHtml() {
 // active keeps at least one chip always selected, same principle as a
 // radio group that shouldn't allow deselecting its last option.
 function _toggleCategoryFilter(category) {
+  // Same Metcon-only default as above — this defensive fallback only
+  // matters if this function somehow runs before the chips are ever
+  // built, but should still agree with the same starting point.
   if (!window._psActiveCategories) {
-    window._psActiveCategories = new Set(Object.keys(SESSION_CATEGORY_LABELS));
+    window._psActiveCategories = new Set(['metcon']);
   }
   const active = window._psActiveCategories;
   if (active.has(category)) {
