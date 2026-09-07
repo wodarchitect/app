@@ -97,20 +97,36 @@ function calcTrainingLoad(history) {
     const mc          = parseFloat(w.mc)           || 0;
     const dur = getSessionDuration(w);
     if (!dayMap[k]) dayMap[k] = {
-      cardioLoad:0, cardioInt:0, hasCardio:false,
-      mixedLoad:0,  mixedInt:0,  hasMixed:false
+      cardioLoad:0, cardioMcAeroSum:0, cardioDurSum:0, cardioBw:bw, hasCardio:false,
+      mixedLoad:0,  mixedMcSum:0,      mixedDurSum:0,  mixedBw:bw,  hasMixed:false
     };
     const dm = dayMap[k];
-    // Cardio aerobic: mc_aero
+    // Cardio aerobic: mc_aero. Load (kcal-based, /bw*1000) correctly
+    // sums across multiple same-day sessions — total daily load really
+    // is the sum of everything done. Intensity is a RATE (kcal/min/kg)
+    // and does NOT work the same way: summing three separate rides'
+    // independently-computed intensities produces a number with no
+    // physiological meaning (confirmed causing a real bug — three
+    // moderate same-day rides summed to an "intensity" 6x any single
+    // one of them, which the amplifier below then compared against a
+    // 28-day history of ordinary single-session days, inflating a
+    // single day's training load by over 6x and corrupting CTL/ATL for
+    // the following 42/7 days). Raw totals are accumulated here instead
+    // and divided once, after all of the day's sessions are in, to get
+    // one genuine combined intensity for the whole day.
     if (mc_aero > 0) {
       dm.cardioLoad += (mc_aero / bw) * 1000;
-      dm.cardioInt  += dur > 0 ? mc_aero / dur / bw : 0;
+      dm.cardioMcAeroSum += mc_aero;
+      dm.cardioDurSum += dur;
+      dm.cardioBw = bw;
       dm.hasCardio   = true;
     }
-    // Mixed aerobic: mc_overhead
+    // Mixed aerobic: mc_overhead — same reasoning as cardio above.
     if (mc_overhead > 0) {
       dm.mixedLoad += (mc_overhead / bw) * 1000;
-      dm.mixedInt  += dur > 0 ? mc_overhead / dur / bw : 0;
+      dm.mixedMcSum += mc_overhead;
+      dm.mixedDurSum += dur;
+      dm.mixedBw = bw;
       dm.hasMixed   = true;
     }
     // Legacy fallback: sessions without mc use wd-based load in mixed bucket
@@ -119,9 +135,28 @@ function calcTrainingLoad(history) {
       const pd = parseFloat(w.pd) || 0;
       const legacyLoad = kj > 0 ? (kj/bw)*1000 : pd*1000;
       dm.mixedLoad += legacyLoad;
-      dm.mixedInt  += dur > 0 && legacyLoad > 0 ? legacyLoad / dur / 1000 : 0;
+      // Pre-multiplied by bw here so the shared post-processing step's
+      // /bw division below cancels out correctly and reproduces the
+      // ORIGINAL legacy formula (legacyLoad/dur/1000, no bw division at
+      // all — legacyLoad already has bw baked in from the (kj/bw)*1000
+      // step above) exactly for the single-session-day case. Caught
+      // this precisely: my first pass here divided by bw an extra,
+      // unintended time.
+      dm.mixedMcSum += legacyLoad > 0 ? (legacyLoad * bw) / 1000 : 0;
+      dm.mixedDurSum += dur;
+      dm.mixedBw = bw;
       dm.hasMixed   = true;
     }
+  });
+  // One combined intensity per day, computed from the day's totals —
+  // not summed per-session. Same value a single, one-session day would
+  // already have gotten (totalMcAero/totalDur/bw, exactly what the old
+  // per-session sum degenerated to when there was only one session),
+  // so this changes nothing for the overwhelmingly common single-
+  // session-day case and only corrects the genuine multi-session-day bug.
+  Object.values(dayMap).forEach(dm => {
+    dm.cardioInt = dm.cardioDurSum > 0 ? dm.cardioMcAeroSum / dm.cardioDurSum / dm.cardioBw : 0;
+    dm.mixedInt  = dm.mixedDurSum  > 0 ? dm.mixedMcSum      / dm.mixedDurSum  / dm.mixedBw  : 0;
   });
 
   const kCTL = 1-Math.exp(-1/42), kATL = 1-Math.exp(-1/7);
@@ -142,7 +177,20 @@ function calcTrainingLoad(history) {
   const cardioIntHistory = [], mixedIntHistory = [];
   const MIN_SESSIONS = 5, WINDOW_DAYS = 28;
 
-  for (let i = 0; i <= days; i++) {
+  // days is already an inclusive day COUNT (firstDate through today, both
+  // included) — the loop below needs exactly that many iterations
+  // (i = 0 .. days-1) to cover exactly that many calendar days. The
+  // previous `i <= days` ran one iteration too many: a "phantom" day
+  // one calendar day past today, with no session data (dayMap[k] is
+  // undefined for it), which still runs through the full CTL/ATL
+  // recurrence with load=0 — the same math as an actual rest day. That
+  // silently pulled every day's displayed CTL/ATL slightly toward zero,
+  // every single day, not just on unusual days like a hard multi-session
+  // one — confirmed by hand: a direct one-step application of the
+  // Banister formula from yesterday's actual CTL and today's actual
+  // load gave a different (correct) result than what the loop was
+  // producing, off by exactly one extra decay step.
+  for (let i = 0; i < days; i++) {
     const d = new Date(firstDate); d.setDate(firstDate.getDate() + i);
     const k = localDateStr(d);
     const dm = dayMap[k];
@@ -2120,18 +2168,34 @@ function getStructuralFatigue() {
   const dayMap = {};
   sorted.forEach(w => {
     const d = w.date.slice(0,10);
-    if (!dayMap[d]) dayMap[d] = { date:d, totalStruct:0, totalStructInt:0, wkgSum:0, wkgCount:0 };
+    if (!dayMap[d]) dayMap[d] = { date:d, totalStruct:0, totalStructInt:0, structMcMechSum:0, structDurSum:0, structBw:currentBw, wkgSum:0, wkgCount:0 };
     const bw       = parseFloat(w.bw) || currentBw;
     const mc_mech  = parseFloat(w.mc_mech) || 0;
     const fb       = parseFloat(w.fb) || 0;
     const dur      = getSessionDuration(w);
     const structLoad = (mc_mech / bw) * 1000;
     dayMap[d].totalStruct    += structLoad;
-    dayMap[d].totalStructInt += (mc_mech > 0 && dur > 0) ? mc_mech / dur / bw : 0;
+    // Raw totals accumulated here, not a summed per-session intensity —
+    // same reasoning, same bug, and same fix as the Aerobic CTL/ATL
+    // function's cardioInt: intensity (mc_mech/dur/bw, a RATE) doesn't
+    // add across separate same-day sessions the way total load does.
+    // Divided once into one genuine combined-day intensity below, after
+    // all of the day's sessions are accumulated — degenerates to
+    // exactly the original per-session formula for the overwhelmingly
+    // common single-session-day case, and only changes multi-session
+    // days.
+    if (mc_mech > 0 && dur > 0) {
+      dayMap[d].structMcMechSum += mc_mech;
+      dayMap[d].structDurSum += dur;
+      dayMap[d].structBw = bw;
+    }
     if (fb > 0 && parseFloat(w.pd) > 0) {
       dayMap[d].wkgSum   += parseFloat(w.pd);
       dayMap[d].wkgCount += 1;
     }
+  });
+  Object.values(dayMap).forEach(dm => {
+    dm.totalStructInt = dm.structDurSum > 0 ? dm.structMcMechSum / dm.structDurSum / dm.structBw : 0;
   });
   const trainingDays = Object.values(dayMap).sort((a,b) => a.date.localeCompare(b.date));
 
