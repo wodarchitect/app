@@ -7,17 +7,27 @@
    it measures motion, not heart rate — so it gets its own file rather
    than being folded into the existing Bluetooth HR code.
 
-   STATUS: connection + parsing + rep-detection/integration engine are
-   built and internally tested against synthetic data (packet parser
-   verified against official WitMotion checksum/scale formulas; rep
-   integration verified against a synthetic rep profile, with and
-   without added noise). The one thing that CANNOT be verified from
-   here is the actual BLE connection itself — service/characteristic
-   UUIDs below are corroborated from two independent sources (WitMotion's
-   own SDK source, and a live BLE scan of a real WT901BLE-series device
-   from a separate open-source project) but not yet confirmed against
-   this specific physical unit. First real connection attempt should
-   watch the console for the service-list warning below.
+   STATUS: connection confirmed working against the real physical unit
+   (WT901BLE67) — but the device sends a completely different packet
+   format than originally assumed. The 11-byte-per-type 0x51/0x52
+   packets this file was built around (verified only against synthetic
+   data, since no real device existed to test against yet) turned out
+   not to be what this unit actually sends. Every real notification is
+   a 20-byte 0x61 "combined" packet (Accel+Gyro+Angle bundled together,
+   no checksum byte at all) — confirmed against WitMotion's own official
+   documentation (WT9011DCL-BT5.0 manual + WT901BLECL datasheet, cross-
+   checked against a third-party open-source SDK implementation) and
+   then verified again directly against this unit's actual captured
+   bytes, which decoded to a physically sensible ~1g Z-axis reading with
+   the sensor sitting still. Original 0x51/0x52 parsing kept in place
+   as a fallback for older WitMotion firmware/config that might still
+   emit that format, dispatched by packet type rather than assumed.
+
+   NOT YET VERIFIED: rep-detection/ZUPT-integration engine (still only
+   tested against synthetic data) and gyro/angle scaling under real
+   motion (accel/angle confirmed correct at rest; gyro fields read zero
+   at rest as expected, but haven't yet seen real rotational movement to
+   confirm the ±2000°/s scale end-to-end).
 
    NOT YET WIRED IN: this module does not yet feed calculateGlobalPhysics
    or get saved to history — that's gated on confirming with the athlete
@@ -52,6 +62,8 @@ window._vbtServer = null;
 window._vbtNotifyChar = null;
 window._vbtConnected = false;
 window._vbtSamples = []; // { ts, az } — vertical accel stream for the current rep-tracking session, cleared per session same as _hrSamples
+window._vbtSessionWorkKJ = 0; // accumulated SENSOR-measured mechanical work for the current live session — the authoritative eRaw numerator when > 0, checked directly by physics-core.js's live eRaw banner
+window._vbtSessionRepCount = 0; // how many reps the pod actually tracked this session — saved alongside the work total so a session with partial coverage (pod only on for some sets) is distinguishable from full coverage later
 
 // ── Connection ──
 // Deliberately verbose on failure — this is the one piece that can't
@@ -116,20 +128,37 @@ async function vbtDisconnect() {
 
 function vbtHandlePacketEvent(event) {
   const bytes = new Uint8Array(event.target.value.buffer);
-  // A single BLE notification can carry more than one 11-byte WIT
-  // packet back-to-back — walk the buffer rather than assuming exactly
-  // one packet per notification.
-  for (let offset = 0; offset + 11 <= bytes.length; offset += 11) {
-    const packet = bytes.subarray(offset, offset + 11);
-    const parsed = parseWitPacket(packet);
-    if (parsed && parsed.type === 'accel') {
-      window._vbtSamples.push({ ts: Date.now(), az: parsed.az });
+  // 0x61 combined packets (confirmed against this specific device's real
+  // notifications: every one is 20 bytes, header 55 61) are a completely
+  // different shape from the 11-byte-per-type 0x51/0x52 packets this
+  // parser was originally built around — 20 isn't a multiple of 11, so
+  // walking the buffer in 11-byte strides read misaligned garbage from
+  // the very first byte, which is exactly why every packet was failing
+  // checksum: not corrupted data, a wrong stride. Detect the type byte
+  // first and dispatch to the matching stride/parser rather than
+  // assuming one fixed packet shape for the whole buffer.
+  let offset = 0;
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0x55) { offset++; continue; } // resync on stray bytes
+    const type = bytes[offset + 1];
+    if (type === 0x61) {
+      if (offset + 20 > bytes.length) break; // partial packet, wait for more data next notification
+      const parsed = parseWitCombinedPacket(bytes.subarray(offset, offset + 20));
+      if (parsed) window._vbtSamples.push({ ts: Date.now(), az: parsed.az });
+      offset += 20;
+    } else {
+      if (offset + 11 > bytes.length) break;
+      const parsed = parseWitPacket(bytes.subarray(offset, offset + 11));
+      if (parsed && parsed.type === 'accel') {
+        window._vbtSamples.push({ ts: Date.now(), az: parsed.az });
+      }
+      // Gyro packets (parsed.type === 'gyro') are received but not
+      // currently used by the rep-detection engine below, which works
+      // from vertical acceleration alone — kept parsed and available for
+      // future use (e.g. detecting bar-path rotation/tilt) rather than
+      // discarded at the parse layer.
+      offset += 11;
     }
-    // Gyro packets (parsed.type === 'gyro') are received but not
-    // currently used by the rep-detection engine below, which works
-    // from vertical acceleration alone — kept parsed and available for
-    // future use (e.g. detecting bar-path rotation/tilt) rather than
-    // discarded at the parse layer.
   }
 }
 
@@ -175,6 +204,49 @@ function parseWitPacket(bytes) {
     };
   }
   return { type: 'unknown_' + type.toString(16) };
+}
+
+// ── Combined packet parser (0x61) ──
+// Confirmed against real device output — every notification from this
+// specific unit (WT901BLE67) came back as 20 bytes with header 55 61,
+// not the separate 11-byte 0x51/0x52 packets this file originally
+// assumed. Verified against WitMotion's own official documentation
+// (WT9011DCL-BT5.0 instruction manual AND the WT901BLECL datasheet,
+// two independent official sources, plus a third-party open-source SDK
+// implementation for cross-check) before writing this, not guessed from
+// the byte layout alone: "Flag = 0x61, Data content: 18Byte is
+// Acceleration, Angular velocity, Angle" — 2-byte header (0x55, 0x61)
+// + 9 × int16 (18 bytes) = 20 bytes total, low byte first, high byte
+// last, in the fixed order Accel XYZ, Gyro XYZ, Angle XYZ. Critically,
+// this format carries NO checksum byte at all — the old parser's
+// checksum check (built for the 0x51/0x52 format, which does have one)
+// was being run against pure data bytes for this format, which is the
+// direct cause of the "every packet fails checksum" symptom — there
+// was never a checksum to validate here in the first place.
+// Accel/Gyro scales match the existing 0x51/0x52 parser exactly (same
+// underlying sensor, just different packet bundling). Angle scale
+// (±180° full scale) confirmed directly from WitMotion's own published
+// formula: "Roll angle X=((RollH<<8)|RollL)/32768*180(°)".
+function parseWitCombinedPacket(bytes) {
+  if (bytes.length !== 20 || bytes[0] !== 0x55 || bytes[1] !== 0x61) return null;
+  const readInt16 = (lo, hi) => { const u = (hi << 8) | lo; return u >= 32768 ? u - 65536 : u; };
+  const raw = [];
+  for (let i = 0; i < 9; i++) {
+    const base = 2 + i * 2;
+    raw.push(readInt16(bytes[base], bytes[base + 1]));
+  }
+  return {
+    type: 'combined',
+    ax: raw[0] / 32768 * 16 * 9.8,
+    ay: raw[1] / 32768 * 16 * 9.8,
+    az: raw[2] / 32768 * 16 * 9.8,
+    wx: raw[3] / 32768 * 2000,
+    wy: raw[4] / 32768 * 2000,
+    wz: raw[5] / 32768 * 2000,
+    roll:  raw[6] / 32768 * 180,
+    pitch: raw[7] / 32768 * 180,
+    yaw:   raw[8] / 32768 * 180
+  };
 }
 
 // ── Rep detection + ZUPT double-integration ──
@@ -289,4 +361,30 @@ function vbtSegmentReps(samples) {
 function vbtRepMechanicalWork(massKg, displacementM) {
   const workJ = massKg * 9.81 * Math.abs(displacementM);
   return { workJ: +workJ.toFixed(1), workKJ: +(workJ / 1000).toFixed(3) };
+}
+
+// Adds one completed rep's sensor-measured mechanical work to the
+// running session total (window._vbtSessionWorkKJ), which
+// physics-core.js's live eRaw banner reads directly and prefers over
+// the PR/ROM estimate whenever it's > 0. Call this once per detected
+// rep (see vbtSegmentReps) with the load actually on the bar for that
+// rep — NOT wired to a "current movement's weight" source yet, since
+// that requires the live timer's own movement/set-tracking state,
+// which needs its own investigation once the pod is in hand and a
+// real session can be run against it rather than guessed at blind.
+function vbtRecordRepWork(massKg, displacementM) {
+  const { workKJ } = vbtRepMechanicalWork(massKg, displacementM);
+  window._vbtSessionWorkKJ = +(window._vbtSessionWorkKJ + workKJ).toFixed(3);
+  window._vbtSessionRepCount += 1;
+  return workKJ;
+}
+
+// Resets session-level VBT accumulation — mirrors the pattern
+// window._hrSamples reset follows in timer.js (called at the same
+// point a new live session actually starts), so a new session never
+// inherits the previous one's accumulated work total.
+function vbtResetSession() {
+  window._vbtSamples = [];
+  window._vbtSessionWorkKJ = 0;
+  window._vbtSessionRepCount = 0;
 }
