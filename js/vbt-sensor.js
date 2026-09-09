@@ -505,3 +505,48 @@ function closeVbtTestPanel() {
   const panel = document.getElementById('vbt-test-panel');
   if (panel) panel.remove();
 }
+
+// ── Test-session capture export (On-Phone Debug Viewer integration) ──
+// Purpose: get raw VBT samples + real ground-truth movement timing off
+// the phone without console access, reusing the existing debug panel
+// (index.html's #debug-output textarea + Copy button, built for
+// blockSegments/mc_* inspection) rather than building new UI or
+// touching profile.js at all — this just adds two more buttons wired
+// to functions defined here.
+//
+// Deliberately snapshot-on-demand (a "Save" button tap), not automatic/
+// continuous — window._vbtSamples is otherwise pure in-memory state
+// that would vanish on navigation or reload, so this is the bridge that
+// makes a test session's data survive long enough to get off the phone.
+// Ground truth reused from what already exists for other purposes,
+// not reinvented: window._cardioIntervals (the real run-toggle
+// start/end, exactly as an athlete would use it normally) and
+// window._blockTimeWindows (real per-block start/end, already built
+// for HR-sample attribution) — so a session with running as its own
+// cardio-toggle interval and push-ups/air-squats as separate blocks
+// needs no new UI interaction at all beyond using the app normally.
+const VBT_CAPTURE_KEY = 'wod_vbt_test_capture';
+
+function vbtSaveCapture() {
+  const capture = {
+    savedAt: new Date().toISOString(),
+    samples: window._vbtSamples || [],
+    cardioIntervals: window._cardioIntervals || [],
+    blockTimeWindows: window._blockTimeWindows || []
+  };
+  try {
+    localStorage.setItem(VBT_CAPTURE_KEY, JSON.stringify(capture));
+    return true;
+  } catch (e) {
+    console.error('[VBT] Capture save failed:', e);
+    return false;
+  }
+}
+
+function _debugShowVbtCapture() {
+  const out = document.getElementById('debug-output');
+  if (!out) return;
+  const raw = localStorage.getItem(VBT_CAPTURE_KEY);
+  if (!raw) { out.value = 'No VBT capture saved yet — tap "Save VBT Capture" after a test session first.'; return; }
+  out.value = raw;
+}
