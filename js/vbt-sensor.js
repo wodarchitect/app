@@ -550,3 +550,23 @@ function _debugShowVbtCapture() {
   if (!raw) { out.value = 'No VBT capture saved yet — tap "Save VBT Capture" after a test session first.'; return; }
   out.value = raw;
 }
+
+// Thin UI wrapper around vbtConnect() for the On-Phone Debug Viewer's
+// Connect button — the underlying vbtConnect() itself is unchanged and
+// still returns a plain boolean; this just adds the "Connecting…" /
+// success / failure toast feedback a button tap needs, which a raw
+// async function call from an inline onclick can't cleanly show on its
+// own. This is the ONLY way to reach vbtConnect() at all without
+// console access — openVbtTestPanel() (built earlier for live rep-count
+// testing) still requires calling it from console first, so it doesn't
+// help on a phone with no console either; this bypasses that panel
+// entirely rather than routing through it.
+async function vbtConnectFromUI() {
+  showToast('Connecting to sensor…', 'info');
+  const ok = await vbtConnect();
+  if (ok) {
+    showToast(`Connected: ${window._vbtDevice?.name || '(unnamed device)'}`, 'success');
+  } else {
+    showToast('Connection failed — check console or retry', 'error');
+  }
+}
