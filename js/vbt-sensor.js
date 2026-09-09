@@ -342,6 +342,25 @@ function vbtSegmentReps(samples) {
     }
     if (inRep) currentRep.push(s);
   });
+  // Trailing rep at the very end of the stream: unlike a rep still in
+  // motion when the stream ends (dropped below, since its numbers would
+  // be an undercount, not a real measurement), a rep that had ALREADY
+  // completed its lockout pause when the stream ends is a genuine,
+  // finished rep — the pause itself is what confirms completion, and
+  // nothing about a subsequent sample (or the lack of one) changes that.
+  // Real-world importance: this is exactly the shape every set's last
+  // rep takes — rep, pause, sensor goes still, recording stops — so
+  // without this check, the mid-stream boundary logic above (which only
+  // closes a rep when motion resumes AFTER a pause) would silently drop
+  // the final rep of every set. Confirmed directly: a captured sequence
+  // ending in a real, sustained pause reported one fewer rep than the
+  // same sequence with one extra sample appended after that pause.
+  if (stationaryStreak >= VBT_STATIONARY_MIN_FRAMES && inRep && currentRep.length > VBT_STATIONARY_MIN_FRAMES) {
+    reps.push({
+      azSamples: currentRep.map(x => x.az),
+      lockoutPauseSec: +(pauseFrames * VBT_DT).toFixed(2)
+    });
+  }
   // Trailing partial rep (still in motion when the sample stream ends)
   // is deliberately dropped, not force-closed — an incomplete rep's
   // displacement/velocity numbers would be an undercount, not a real
