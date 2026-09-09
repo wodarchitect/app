@@ -407,3 +407,101 @@ function vbtResetSession() {
   window._vbtSessionWorkKJ = 0;
   window._vbtSessionRepCount = 0;
 }
+
+// ── Live test panel (diagnostic tool, not a permanent feature) ──
+// Purpose: visually confirm rep detection works on real hardware before
+// committing to any permanent UI placement or wiring this into saved
+// history. Deliberately opened via console (openVbtTestPanel()) rather
+// than a nav button — this is for validating against real equipment
+// next, not a finished feature yet.
+//
+// Reuses vbtSegmentReps/vbtIntegrateRep exactly as validated against
+// real captured data (including the just-fixed trailing-rep bug) —
+// this panel adds no new detection logic of its own, just polls the
+// existing window._vbtSamples buffer and re-runs the same functions
+// already proven correct, so a bug found here would be a UI bug, not a
+// re-litigation of the detection logic itself.
+let _vbtPanelInterval = null;
+let _vbtPanelLastRepCount = 0;
+
+function openVbtTestPanel() {
+  if (document.getElementById('vbt-test-panel')) return; // already open
+
+  const panel = document.createElement('div');
+  panel.id = 'vbt-test-panel';
+  panel.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:20px;';
+  panel.innerHTML = `
+    <div style="width:100%;max-width:420px;background:linear-gradient(135deg, rgba(255,107,0,.12) 0%, rgba(22,27,38,.97) 100%);border-left:4px solid #FF6B00;border-radius:12px;padding:24px;font-family:inherit;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <span style="font-size:.75rem;font-weight:800;color:#FF6B00;text-transform:uppercase;letter-spacing:.05em;">VBT Sensor Test</span>
+        <button id="vbt-panel-close" style="background:none;border:none;color:#888;font-size:1.2rem;cursor:pointer;padding:4px 8px;">✕</button>
+      </div>
+
+      <div id="vbt-panel-status" style="font-size:.8rem;color:#888;margin-bottom:16px;">Not connected</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:20px;">
+        <button id="vbt-panel-connect" style="flex:1;background:#FF6B00;color:#fff;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer;">Connect</button>
+        <button id="vbt-panel-reset" style="flex:1;background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:10px;font-weight:700;cursor:pointer;">Reset Count</button>
+      </div>
+
+      <div style="text-align:center;margin-bottom:20px;">
+        <div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Reps Detected</div>
+        <div id="vbt-panel-repcount" style="font-size:3.5rem;font-weight:900;color:#fff;line-height:1;">0</div>
+      </div>
+
+      <div id="vbt-panel-lastrep" style="font-size:.78rem;color:#ccc;text-align:center;margin-bottom:16px;min-height:1.2em;"></div>
+
+      <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:12px;">
+        <div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Live az (m/s²)</div>
+        <div id="vbt-panel-liveaz" style="font-size:1.3rem;font-weight:700;color:#FF6B00;font-family:monospace;">—</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  document.getElementById('vbt-panel-close').addEventListener('click', closeVbtTestPanel);
+  document.getElementById('vbt-panel-connect').addEventListener('click', async () => {
+    const statusEl = document.getElementById('vbt-panel-status');
+    statusEl.textContent = 'Connecting…';
+    const ok = await vbtConnect();
+    statusEl.textContent = ok ? `Connected: ${window._vbtDevice?.name || '(unnamed device)'}` : 'Connection failed — check console';
+    statusEl.style.color = ok ? '#4ADE80' : '#EF4444';
+  });
+  document.getElementById('vbt-panel-reset').addEventListener('click', () => {
+    vbtResetSession();
+    _vbtPanelLastRepCount = 0;
+    document.getElementById('vbt-panel-repcount').textContent = '0';
+    document.getElementById('vbt-panel-lastrep').textContent = '';
+  });
+
+  _vbtPanelLastRepCount = 0;
+  _vbtPanelInterval = setInterval(_vbtPanelTick, 150);
+}
+
+function _vbtPanelTick() {
+  const panel = document.getElementById('vbt-test-panel');
+  if (!panel) { clearInterval(_vbtPanelInterval); return; } // panel closed elsewhere — stop polling
+
+  const liveAzEl = document.getElementById('vbt-panel-liveaz');
+  const last = window._vbtSamples[window._vbtSamples.length - 1];
+  if (liveAzEl && last) liveAzEl.textContent = last.az.toFixed(2);
+
+  // Re-detect against the full buffer every tick — simple and correct
+  // for a short test session; not optimized for long-running capture,
+  // since this is a diagnostic tool, not the final integration.
+  const reps = vbtSegmentReps(window._vbtSamples);
+  if (reps.length > _vbtPanelLastRepCount) {
+    const newest = reps[reps.length - 1];
+    const stats = vbtIntegrateRep(newest.azSamples);
+    document.getElementById('vbt-panel-repcount').textContent = reps.length;
+    document.getElementById('vbt-panel-lastrep').textContent =
+      `Last rep: ${stats.displacementM.toFixed(2)}m displacement, ${stats.peakVelocityMs.toFixed(2)} m/s peak velocity`;
+    _vbtPanelLastRepCount = reps.length;
+  }
+}
+
+function closeVbtTestPanel() {
+  if (_vbtPanelInterval) { clearInterval(_vbtPanelInterval); _vbtPanelInterval = null; }
+  const panel = document.getElementById('vbt-test-panel');
+  if (panel) panel.remove();
+}
