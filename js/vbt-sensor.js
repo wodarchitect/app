@@ -127,7 +127,37 @@ async function vbtDisconnect() {
 }
 
 function vbtHandlePacketEvent(event) {
-  const bytes = new Uint8Array(event.target.value.buffer);
+  const incoming = new Uint8Array(event.target.value.buffer);
+  // Diagnostics: raw per-notification length, kept regardless of
+  // whether fragmentation turns out to be the actual explanation for
+  // anything, so this is checkable directly next time rather than
+  // inferred. Capped to avoid unbounded growth over a long session.
+  if (!window._vbtNotificationLengths) window._vbtNotificationLengths = [];
+  window._vbtNotificationLengths.push(incoming.length);
+  if (window._vbtNotificationLengths.length > 5000) window._vbtNotificationLengths.shift();
+
+  // Carry over any leftover bytes from a packet that was split across
+  // the PREVIOUS notification boundary — this was a real, previously-
+  // unhandled gap: every notification used to be treated as a fresh,
+  // standalone buffer with no memory of a prior partial packet, so a
+  // packet split across two notifications would have its trailing
+  // fragment silently discarded, potentially misaligning parsing for
+  // everything that followed until the resync logic below happened to
+  // find a real 0x55 header again (which could briefly misinterpret
+  // ordinary data bytes as a fake one). Not confirmed as the actual
+  // cause of any specific anomaly — genuinely don't know yet — but a
+  // real gap regardless, worth closing rather than leaving in place
+  // while investigating.
+  let bytes;
+  if (window._vbtLeftoverBytes && window._vbtLeftoverBytes.length > 0) {
+    bytes = new Uint8Array(window._vbtLeftoverBytes.length + incoming.length);
+    bytes.set(window._vbtLeftoverBytes, 0);
+    bytes.set(incoming, window._vbtLeftoverBytes.length);
+  } else {
+    bytes = incoming;
+  }
+  window._vbtLeftoverBytes = null;
+
   // 0x61 combined packets (confirmed against this specific device's real
   // notifications: every one is 20 bytes, header 55 61) are a completely
   // different shape from the 11-byte-per-type 0x51/0x52 packets this
@@ -138,16 +168,31 @@ function vbtHandlePacketEvent(event) {
   // first and dispatch to the matching stride/parser rather than
   // assuming one fixed packet shape for the whole buffer.
   let offset = 0;
+  let resyncSkips = 0; // diagnostic: how many stray bytes got skipped this call
   while (offset < bytes.length) {
-    if (bytes[offset] !== 0x55) { offset++; continue; } // resync on stray bytes
+    if (bytes[offset] !== 0x55) { offset++; resyncSkips++; continue; } // resync on stray bytes
     const type = bytes[offset + 1];
     if (type === 0x61) {
-      if (offset + 20 > bytes.length) break; // partial packet, wait for more data next notification
+      if (offset + 20 > bytes.length) { window._vbtLeftoverBytes = bytes.slice(offset); break; } // partial packet — carried into next notification instead of discarded
       const parsed = parseWitCombinedPacket(bytes.subarray(offset, offset + 20));
-      if (parsed) window._vbtSamples.push({ ts: Date.now(), az: parsed.az });
+      // roll/pitch/yaw captured alongside az specifically to diagnose a
+      // real, unresolved question: whether the device's own orientation
+      // estimate (what gravity compensation is built on) can diverge
+      // during sustained, rapid wrist rotation — e.g. running — and
+      // stay diverged afterward, rather than re-settling once motion
+      // stops. A real capture showed extreme az values persisting
+      // through what should have been genuinely quiet rest periods
+      // between blocks, with no way to tell from az alone whether that
+      // was a diverged orientation estimate or something else. This
+      // makes that checkable directly next time: a diverged estimate
+      // should show roll/pitch stuck away from a resting baseline (or
+      // drifting without settling) through the same quiet periods,
+      // whereas correctly-behaving orientation would return close to
+      // whatever it read before the vigorous motion started.
+      if (parsed) window._vbtSamples.push({ ts: Date.now(), az: parsed.az, roll: parsed.roll, pitch: parsed.pitch, yaw: parsed.yaw });
       offset += 20;
     } else {
-      if (offset + 11 > bytes.length) break;
+      if (offset + 11 > bytes.length) { window._vbtLeftoverBytes = bytes.slice(offset); break; } // partial packet — carried into next notification instead of discarded
       const parsed = parseWitPacket(bytes.subarray(offset, offset + 11));
       if (parsed && parsed.type === 'accel') {
         window._vbtSamples.push({ ts: Date.now(), az: parsed.az });
@@ -159,6 +204,17 @@ function vbtHandlePacketEvent(event) {
       // discarded at the parse layer.
       offset += 11;
     }
+  }
+  // Diagnostic: how many stray bytes this call had to skip before
+  // finding a valid header — a sustained non-zero rate here (as opposed
+  // to the rare, occasional skip) would be real evidence of ongoing
+  // misalignment, which the leftover-bytes fix above should now prevent
+  // going forward but is worth being able to see directly rather than
+  // assume fixed.
+  if (resyncSkips > 0) {
+    if (!window._vbtResyncSkipLog) window._vbtResyncSkipLog = [];
+    window._vbtResyncSkipLog.push({ ts: Date.now(), skips: resyncSkips });
+    if (window._vbtResyncSkipLog.length > 500) window._vbtResyncSkipLog.shift();
   }
 }
 
@@ -406,6 +462,9 @@ function vbtResetSession() {
   window._vbtSamples = [];
   window._vbtSessionWorkKJ = 0;
   window._vbtSessionRepCount = 0;
+  window._vbtNotificationLengths = [];
+  window._vbtResyncSkipLog = [];
+  window._vbtLeftoverBytes = null;
 }
 
 // ── Live test panel (diagnostic tool, not a permanent feature) ──
@@ -532,7 +591,16 @@ function vbtSaveCapture() {
     savedAt: new Date().toISOString(),
     samples: window._vbtSamples || [],
     cardioIntervals: window._cardioIntervals || [],
-    blockTimeWindows: window._blockTimeWindows || []
+    blockTimeWindows: window._blockTimeWindows || [],
+    // Diagnostics for directly checking, rather than assuming, whether
+    // packets were arriving cleanly — notificationLengths should read a
+    // consistent 20 throughout if the device's byte stream aligns with
+    // BLE notification boundaries; resyncSkipLog should stay empty or
+    // near-empty if it does. Either one showing otherwise would be real,
+    // direct evidence of the fragmentation this session's fix targets,
+    // rather than something inferred after the fact.
+    notificationLengths: window._vbtNotificationLengths || [],
+    resyncSkipLog: window._vbtResyncSkipLog || []
   };
   try {
     localStorage.setItem(VBT_CAPTURE_KEY, JSON.stringify(capture));
@@ -570,3 +638,29 @@ async function vbtConnectFromUI() {
     showToast('Connection failed — check console or retry', 'error');
   }
 }
+
+// ── Persistent connection status badge (On-Phone Debug Viewer) ──
+// Separate from the toast vbtConnectFromUI() already shows on a tap —
+// a toast fades after 3 seconds and says nothing once it's gone; this
+// gives ongoing, at-a-glance visibility into whether the sensor is
+// STILL connected, including cases the toast never covers at all: an
+// unexpected mid-session disconnect (walking out of range, low
+// battery) with no button ever pressed to trigger a toast in the first
+// place. Polls window._vbtConnected rather than hooking directly into
+// vbtOnDisconnected/vbtConnect — same lightweight pattern already used
+// for the live rep-count panel elsewhere in this file, and avoids
+// touching either of those two working, already-tested functions to
+// add this.
+function _vbtStatusBadgeTick() {
+  const dot = document.getElementById('vbt-status-dot');
+  const text = document.getElementById('vbt-status-text');
+  if (!dot || !text) return; // debug panel not in the DOM right now — fine, just skip this tick
+  if (window._vbtConnected) {
+    dot.style.background = '#4ADE80';
+    text.textContent = `Connected: ${window._vbtDevice?.name || '(unnamed device)'}`;
+  } else {
+    dot.style.background = '#666';
+    text.textContent = 'Not connected';
+  }
+}
+setInterval(_vbtStatusBadgeTick, 1000);
