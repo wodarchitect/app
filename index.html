@@ -102,6 +102,10 @@
             <div style="margin-bottom:8px;">
               <button onclick="vbtConnectFromUI()" style="width:100%;padding:8px;border-radius:8px;border:none;background:#FF6B35;color:#fff;font-size:.72rem;font-weight:700;">Connect VBT Sensor</button>
             </div>
+            <div id="vbt-status-badge" style="display:flex;align-items:center;gap:6px;font-size:.68rem;font-weight:700;color:var(--label);margin-bottom:8px;">
+              <span id="vbt-status-dot" style="width:8px;height:8px;border-radius:50%;background:#666;display:inline-block;"></span>
+              <span id="vbt-status-text">Not connected</span>
+            </div>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
               <button onclick="vbtSaveCapture() ? showToast('VBT capture saved') : showToast('Save failed — see console')" style="flex:1;padding:8px;border-radius:8px;border:none;background:var(--card-bg);color:var(--text);font-size:.72rem;font-weight:700;">Save VBT Capture</button>
               <button onclick="_debugShowVbtCapture()" style="flex:1;padding:8px;border-radius:8px;border:none;background:var(--card-bg);color:var(--text);font-size:.72rem;font-weight:700;">Show VBT Capture</button>
