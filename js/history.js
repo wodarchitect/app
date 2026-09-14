@@ -425,7 +425,7 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
 /* ════════════════════════════════════════════════════
    HISTORY FILTER + SORT
 ════════════════════════════════════════════════════ */
-const _histFilter = { date:'all', pd:'all', wd:'all', mc:'all', td:'all', rl:'all', fb:'all', rpe:'all', modality:'all', movement:'', cwod:'' };
+const _histFilter = { date:'all', pd:'all', wd:'all', mc:'all', td:'all', rl:'all', fb:'all', rpe:'all', modality:'all', cvintensity:'all', cardiostrain:'all', eraw:'all', workeff:'all', runeff:'all', cycleeff:'all', movement:'', cwod:'', sessionname:'' };
 let _histSortField = 'date', _histSortAsc = false;
 
 function toggleHistFilter() {
@@ -554,14 +554,16 @@ function toggleHistSortDir() {
 }
 
 function clearHistFilters() {
-  Object.keys(_histFilter).forEach(k => _histFilter[k] = k === 'movement' || k === 'cwod' ? '' : 'all');
+  Object.keys(_histFilter).forEach(k => _histFilter[k] = (k === 'movement' || k === 'cwod' || k === 'sessionname') ? '' : 'all');
   document.querySelectorAll('.hist-chip').forEach(c => {
     c.classList.toggle('active', c.dataset.val === 'all');
   });
   const mi = document.getElementById('hist-filter-movement');
   const ci = document.getElementById('hist-filter-cwod');
+  const ni = document.getElementById('hist-filter-sessionname');
   if (mi) mi.value = '';
   if (ci) ci.value = '';
+  if (ni) ni.value = '';
   _histSortField = 'date'; _histSortAsc = false;
   const sf = document.getElementById('hist-sort-field');
   if (sf) sf.value = 'date';
@@ -589,19 +591,28 @@ function updateHistActiveBadges() {
     fb:      { all:'', metabolic:'Metabolic', mixed:'Mixed', strength:'Strength', maxstr:'Max Str.' },
     rpe:     { all:'', easy:'RPE Easy', mod:'RPE Mod', hard:'RPE Hard' },
     modality:{ all:'', fortime:'For Time', amrap:'AMRAP', emom:'EMOM', exmom:'EXMOM', tabata:'Tabata' },
+    cvintensity: { all:'', low:'CV Int:Low', mod:'CV Int:Mod', high:'CV Int:High' },
+    cardiostrain:{ all:'', low:'Cardio Strain:Low', mod:'Cardio Strain:Mod', high:'Cardio Strain:High' },
+    eraw:        { all:'', low:'Eff:Low', mod:'Eff:Mod', high:'Eff:High' },
+    workeff:     { all:'', low:'Work Eff:Low', mod:'Work Eff:Mod', high:'Work Eff:High' },
+    runeff:      { all:'', low:'Run Eff:Low', mod:'Run Eff:Mod', high:'Run Eff:High' },
+    cycleeff:    { all:'', low:'Cycle Eff:Low', mod:'Cycle Eff:Mod', high:'Cycle Eff:High' },
   };
   const badges = Object.entries(_histFilter)
-    .filter(([k,v]) => k !== 'movement' && k !== 'cwod' && v !== 'all')
+    .filter(([k,v]) => k !== 'movement' && k !== 'cwod' && k !== 'sessionname' && v !== 'all')
     .map(([k,v]) => `<div class="hist-active-badge">${labels[k]?.[v]||v} <span onclick="clearGroup('${k}')">&#x2715;</span></div>`);
+  if (_histFilter.sessionname) badges.push(`<div class="hist-active-badge">Name: ${_histFilter.sessionname} <span onclick="clearGroup('sessionname')">&#x2715;</span></div>`);
   if (_histFilter.movement) badges.push(`<div class="hist-active-badge">Move: ${_histFilter.movement} <span onclick="clearGroup('movement')">&#x2715;</span></div>`);
   if (_histFilter.cwod)     badges.push(`<div class="hist-active-badge">WOD: ${_histFilter.cwod} <span onclick="clearGroup('cwod')">&#x2715;</span></div>`);
   wrap.innerHTML = badges.join('');
 }
 
 function clearGroup(group) {
-  _histFilter[group] = group === 'movement' || group === 'cwod' ? '' : 'all';
-  if (group === 'movement') { const el = document.getElementById('hist-filter-movement'); if (el) el.value = ''; }
-  if (group === 'cwod')     { const el = document.getElementById('hist-filter-cwod');     if (el) el.value = ''; }
+  const isTextGroup = group === 'movement' || group === 'cwod' || group === 'sessionname';
+  _histFilter[group] = isTextGroup ? '' : 'all';
+  if (group === 'movement')    { const el = document.getElementById('hist-filter-movement'); if (el) el.value = ''; }
+  if (group === 'cwod')        { const el = document.getElementById('hist-filter-cwod');     if (el) el.value = ''; }
+  if (group === 'sessionname') { const el = document.getElementById('hist-filter-sessionname'); if (el) el.value = ''; }
   document.querySelectorAll(`#chips-${group} .hist-chip`).forEach(c => {
     c.classList.toggle('active', c.dataset.val === 'all');
   });
@@ -609,18 +620,46 @@ function clearGroup(group) {
 }
 
 function getFilteredHistory() {
-  // Tag each entry with its original index before any filtering/sorting
-  let hist = getHistory().map((w, i) => ({ ...w, _origIdx: i }));
+  // Tag each entry with its original index before any filtering/sorting.
+  // Also precompute the metrics that have no stored field (Cardio
+  // Intensity, Work/Running/Cycling Efficiency) once per entry here —
+  // getSessionCVEndurance() and getSegmentedEfficiency() are reused below
+  // for percentile thresholds, filtering, AND sorting, so computing them
+  // once up front avoids running each of those functions 3x per entry.
+  let hist = getHistory().map((w, i) => {
+    let cvMet = null;
+    try { const cv = getSessionCVEndurance(w); cvMet = cv?.met ?? null; } catch (e) {}
+    let workEff = null, runEff = null, cycleEff = null;
+    try {
+      const seg = (typeof getSegmentedEfficiency === 'function') ? getSegmentedEfficiency(w) : null;
+      workEff = seg?.workEff ?? null;
+      runEff = seg?.runEff ?? null;
+      cycleEff = seg?.cycleEff ?? null;
+    } catch (e) {}
+    return { ...w, _origIdx: i, _cvMet: cvMet, _workEff: workEff, _runEff: runEff, _cycleEff: cycleEff };
+  });
   const now = Date.now();
 
   // ── Dynamic ranges based on athlete's own history percentiles ──
   const allPD = hist.map(w => parseFloat(w.pd)||0).filter(v => v > 0).sort((a,b)=>a-b);
   const allWD = hist.map(w => parseFloat(w.wd)||0).filter(v => v > 0).sort((a,b)=>a-b);
   const allMC = hist.map(w => parseFloat(w.mc)||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allCV = hist.map(w => w._cvMet||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allCS = hist.map(w => parseFloat(w.cardioStrainMetMin)||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allER = hist.map(w => parseFloat(w.eRaw)||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allWE = hist.map(w => w._workEff||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allRE = hist.map(w => w._runEff||0).filter(v => v > 0).sort((a,b)=>a-b);
+  const allCE = hist.map(w => w._cycleEff||0).filter(v => v > 0).sort((a,b)=>a-b);
   const pct = (arr, p) => arr[Math.floor(arr.length * p)] ?? 0;
   const pdLow = pct(allPD, 0.33), pdHigh = pct(allPD, 0.67);
   const wdLow = pct(allWD, 0.33), wdHigh = pct(allWD, 0.67);
   const mcLow = pct(allMC, 0.33), mcHigh = pct(allMC, 0.67);
+  const cvLow = pct(allCV, 0.33), cvHigh = pct(allCV, 0.67);
+  const csLow = pct(allCS, 0.33), csHigh = pct(allCS, 0.67);
+  const erLow = pct(allER, 0.33), erHigh = pct(allER, 0.67);
+  const weLow = pct(allWE, 0.33), weHigh = pct(allWE, 0.67);
+  const reLow = pct(allRE, 0.33), reHigh = pct(allRE, 0.67);
+  const ceLow = pct(allCE, 0.33), ceHigh = pct(allCE, 0.67);
 
   if (_histFilter.date !== 'all') {
     const days = parseInt(_histFilter.date);
@@ -698,6 +737,70 @@ function getFilteredHistory() {
       return blocks.some(b => (b.mode || '').toLowerCase() === _histFilter.modality);
     });
   }
+  if (_histFilter.cvintensity !== 'all') {
+    hist = hist.filter(w => {
+      const v = w._cvMet || 0;
+      if (!v) return false;
+      if (_histFilter.cvintensity === 'low')  return v <= cvLow;
+      if (_histFilter.cvintensity === 'mod')  return v > cvLow && v <= cvHigh;
+      if (_histFilter.cvintensity === 'high') return v > cvHigh;
+      return true;
+    });
+  }
+  if (_histFilter.cardiostrain !== 'all') {
+    hist = hist.filter(w => {
+      const v = parseFloat(w.cardioStrainMetMin) || 0;
+      if (!v) return false;
+      if (_histFilter.cardiostrain === 'low')  return v <= csLow;
+      if (_histFilter.cardiostrain === 'mod')  return v > csLow && v <= csHigh;
+      if (_histFilter.cardiostrain === 'high') return v > csHigh;
+      return true;
+    });
+  }
+  if (_histFilter.eraw !== 'all') {
+    hist = hist.filter(w => {
+      const v = parseFloat(w.eRaw) || 0;
+      if (!v) return false;
+      if (_histFilter.eraw === 'low')  return v <= erLow;
+      if (_histFilter.eraw === 'mod')  return v > erLow && v <= erHigh;
+      if (_histFilter.eraw === 'high') return v > erHigh;
+      return true;
+    });
+  }
+  if (_histFilter.workeff !== 'all') {
+    hist = hist.filter(w => {
+      const v = w._workEff || 0;
+      if (!v) return false;
+      if (_histFilter.workeff === 'low')  return v <= weLow;
+      if (_histFilter.workeff === 'mod')  return v > weLow && v <= weHigh;
+      if (_histFilter.workeff === 'high') return v > weHigh;
+      return true;
+    });
+  }
+  if (_histFilter.runeff !== 'all') {
+    hist = hist.filter(w => {
+      const v = w._runEff || 0;
+      if (!v) return false;
+      if (_histFilter.runeff === 'low')  return v <= reLow;
+      if (_histFilter.runeff === 'mod')  return v > reLow && v <= reHigh;
+      if (_histFilter.runeff === 'high') return v > reHigh;
+      return true;
+    });
+  }
+  if (_histFilter.cycleeff !== 'all') {
+    hist = hist.filter(w => {
+      const v = w._cycleEff || 0;
+      if (!v) return false;
+      if (_histFilter.cycleeff === 'low')  return v <= ceLow;
+      if (_histFilter.cycleeff === 'mod')  return v > ceLow && v <= ceHigh;
+      if (_histFilter.cycleeff === 'high') return v > ceHigh;
+      return true;
+    });
+  }
+  if (_histFilter.sessionname) {
+    const nameSearch = _histFilter.sessionname.toLowerCase();
+    hist = hist.filter(w => (w.label || '').toLowerCase().includes(nameSearch));
+  }
   if (_histFilter.movement) {
     const mvSearch = _histFilter.movement.toLowerCase();
     hist = hist.filter(w => {
@@ -719,6 +822,12 @@ function getFilteredHistory() {
     if (_histSortField === 'date')     { va = new Date(a.date).getTime(); vb = new Date(b.date).getTime(); }
     else if (_histSortField === 'rpe') { va = parseInt(a.rpe)||0;         vb = parseInt(b.rpe)||0; }
     else if (_histSortField === 'pd')  { va = getSessionPower(a)?.total ?? (parseFloat(a.pd)||0); vb = getSessionPower(b)?.total ?? (parseFloat(b.pd)||0); }
+    else if (_histSortField === 'cvintensity')  { va = a._cvMet||0;       vb = b._cvMet||0; }
+    else if (_histSortField === 'cardiostrain') { va = parseFloat(a.cardioStrainMetMin)||0; vb = parseFloat(b.cardioStrainMetMin)||0; }
+    else if (_histSortField === 'eraw')         { va = parseFloat(a.eRaw)||0; vb = parseFloat(b.eRaw)||0; }
+    else if (_histSortField === 'workeff')      { va = a._workEff||0;     vb = b._workEff||0; }
+    else if (_histSortField === 'runeff')       { va = a._runEff||0;      vb = b._runEff||0; }
+    else if (_histSortField === 'cycleeff')     { va = a._cycleEff||0;    vb = b._cycleEff||0; }
     else                               { va = parseFloat(a[_histSortField])||0; vb = parseFloat(b[_histSortField])||0; }
     return _histSortAsc ? va - vb : vb - va;
   });
