@@ -1028,8 +1028,13 @@ function finishCurrentBlock(knownElapsedSec) {
       setSwipeMode('skip-rest');
       startRestCountdown(restSec);
     } else {
+      // No countdown for blocks after the first — finishCurrentBlock()
+      // only ever runs once block 0 has already completed, so this path
+      // never represents the session's opening countdown (that's handled
+      // separately in start()). Mirrors the rest-countdown path above,
+      // which already skips straight to initBlock() when its timer ends.
       setSwipeMode('finish');
-      startCountdown();
+      initBlock();
     }
   } else { isRunning = false; sessionEnded = true; releaseWakeLock(); speak('Finish'); _watchControlStop();
     const fab2 = document.getElementById('roundFab'); if (fab2) fab2.classList.remove('visible');
