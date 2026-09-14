@@ -61,7 +61,7 @@ window._vbtDevice = null;
 window._vbtServer = null;
 window._vbtNotifyChar = null;
 window._vbtConnected = false;
-window._vbtSamples = []; // { ts, az } — vertical accel stream for the current rep-tracking session, cleared per session same as _hrSamples
+window._vbtSamples = []; // { ts, az, ax, ay, wx, wy, wz, roll, pitch, yaw } — full accel+gyro+angle stream for the current rep-tracking session, cleared per session same as _hrSamples. ax/ay/wx/wy/wz added for modality classification (running vs mechanical work) — az/roll/pitch/yaw alone couldn't distinguish cadence/swing pattern from rep pattern.
 window._vbtSessionWorkKJ = 0; // accumulated SENSOR-measured mechanical work for the current live session — the authoritative eRaw numerator when > 0, checked directly by physics-core.js's live eRaw banner
 window._vbtSessionRepCount = 0; // how many reps the pod actually tracked this session — saved alongside the work total so a session with partial coverage (pod only on for some sets) is distinguishable from full coverage later
 
@@ -189,7 +189,12 @@ function vbtHandlePacketEvent(event) {
       // drifting without settling) through the same quiet periods,
       // whereas correctly-behaving orientation would return close to
       // whatever it read before the vigorous motion started.
-      if (parsed) window._vbtSamples.push({ ts: Date.now(), az: parsed.az, roll: parsed.roll, pitch: parsed.pitch, yaw: parsed.yaw });
+      if (parsed) window._vbtSamples.push({
+        ts: Date.now(),
+        az: parsed.az, ax: parsed.ax, ay: parsed.ay,
+        wx: parsed.wx, wy: parsed.wy, wz: parsed.wz,
+        roll: parsed.roll, pitch: parsed.pitch, yaw: parsed.yaw
+      });
       offset += 20;
     } else {
       if (offset + 11 > bytes.length) { window._vbtLeftoverBytes = bytes.slice(offset); break; } // partial packet — carried into next notification instead of discarded
@@ -371,7 +376,7 @@ function vbtIntegrateRep(azSamples) {
 // lift) sits between two non-stationary (moving) windows. Returns an
 // array of { azSamples, lockoutPauseSec } per detected rep.
 function vbtSegmentReps(samples) {
-  // samples: [{ ts, az }] — as accumulated in window._vbtSamples
+  // samples: [{ ts, az, ax, ay, wx, wy, wz, roll, pitch, yaw }] — as accumulated in window._vbtSamples
   const reps = [];
   let currentRep = [];
   let stationaryStreak = 0;
