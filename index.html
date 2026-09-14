@@ -1669,13 +1669,19 @@
                 <div class="hist-sort-row">
                   <select class="hist-sort-select" id="hist-sort-field" onchange="applyHistFilter()">
                     <option value="date" data-i18n="hist.sort.date">Date</option>
-                    <option value="pd" data-i18n="hist.sort.pd">Intensity (W/kg)</option>
-                    <option value="wd" data-i18n="hist.sort.wd">Total Work (kJ)</option>
+                    <option value="pd" data-i18n="hist.sort.pd">Mechanical Power (W/kg)</option>
+                    <option value="wd" data-i18n="hist.sort.wd">Mechanical Work (kJ)</option>
                     <option value="mc" data-i18n="hist.sort.mc">Metabolic Cost (kcal)</option>
                     <option value="fb" data-i18n="hist.sort.fb">Force Bias</option>
                     <option value="td" data-i18n="hist.sort.td">Technical Demand</option>
                     <option value="rl" data-i18n="hist.sort.rl">Relative Loading</option>
                     <option value="rpe" data-i18n="hist.sort.rpe">RPE</option>
+                    <option value="cvintensity" data-i18n="hist.sort.cvintensity">Cardio Intensity (MET)</option>
+                    <option value="cardiostrain" data-i18n="hist.sort.cardiostrain">Cardio Strain (MET-min)</option>
+                    <option value="eraw" data-i18n="hist.sort.eraw">Overall Efficiency</option>
+                    <option value="workeff" data-i18n="hist.sort.workeff">Work Efficiency</option>
+                    <option value="runeff" data-i18n="hist.sort.runeff">Running Efficiency</option>
+                    <option value="cycleeff" data-i18n="hist.sort.cycleeff">Cycling Efficiency</option>
                   </select>
                   <button class="hist-sort-dir" id="hist-sort-dir" onclick="toggleHistSortDir()">↓</button>
                 </div>
@@ -1690,7 +1696,7 @@
                 </div>
               </div>
               <div class="hist-filter-row">
-                <div class="hist-filter-label" data-i18n="hist.filter.intensity">Intensity</div>
+                <div class="hist-filter-label" data-i18n="hist.filter.intensity">Mechanical Power</div>
                 <div class="hist-chip-row" id="chips-pd">
                   <div class="hist-chip active" data-val="all" onclick="selectChip('pd',this)" data-i18n="hist.chip.any">Any</div>
                   <div class="hist-chip" data-val="low" onclick="selectChip('pd',this)" data-i18n="hist.chip.low">Low</div>
@@ -1763,6 +1769,66 @@
                   <div class="hist-chip" data-val="exmom" onclick="selectChip('modality',this)">EXMOM</div>
                   <div class="hist-chip" data-val="tabata" onclick="selectChip('modality',this)">Tabata</div>
                 </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.cvintensity">Cardio Intensity</div>
+                <div class="hist-chip-row" id="chips-cvintensity">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('cvintensity',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('cvintensity',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('cvintensity',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('cvintensity',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.cardiostrain">Cardio Strain</div>
+                <div class="hist-chip-row" id="chips-cardiostrain">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('cardiostrain',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('cardiostrain',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('cardiostrain',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('cardiostrain',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.eraw">Overall Efficiency</div>
+                <div class="hist-chip-row" id="chips-eraw">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('eraw',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('eraw',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('eraw',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('eraw',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.workeff">Work Efficiency</div>
+                <div class="hist-chip-row" id="chips-workeff">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('workeff',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('workeff',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('workeff',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('workeff',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.runeff">Running Efficiency</div>
+                <div class="hist-chip-row" id="chips-runeff">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('runeff',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('runeff',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('runeff',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('runeff',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row">
+                <div class="hist-filter-label" data-i18n="hist.filter.cycleeff">Cycling Efficiency</div>
+                <div class="hist-chip-row" id="chips-cycleeff">
+                  <div class="hist-chip active" data-val="all" onclick="selectChip('cycleeff',this)" data-i18n="hist.chip.any">Any</div>
+                  <div class="hist-chip" data-val="low" onclick="selectChip('cycleeff',this)" data-i18n="hist.chip.low">Low</div>
+                  <div class="hist-chip" data-val="mod" onclick="selectChip('cycleeff',this)"><span data-i18n="cx.moderate">Moderate</span></div>
+                  <div class="hist-chip" data-val="high" onclick="selectChip('cycleeff',this)" data-i18n="hist.chip.high">High</div>
+                </div>
+              </div>
+              <div class="hist-filter-row" style="position:relative;">
+                <div class="hist-filter-label" data-i18n="hist.filter.sessionname">Session Name</div>
+                <input id="hist-filter-sessionname" type="text" placeholder="e.g. Saturday Metcon" data-i18n-placeholder="hist.filter.sessionname.ph"
+                  oninput="_histFilter.sessionname=this.value.trim();applyHistFilter()"
+                  style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--glass-inner);color:var(--text);font-size:.82rem;box-sizing:border-box;">
               </div>
               <div class="hist-filter-row" style="position:relative;">
                 <div class="hist-filter-label" data-i18n="hist.filter.movement">Movement</div>
