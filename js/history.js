@@ -1635,35 +1635,7 @@ function openHistoryModal(idx) {
   document.getElementById('modalContent').innerHTML = `
     <div class="modal-title">${w.label}</div>
     <div class="modal-subtitle">${dateStr} ${t('hist.modal.at')} ${timeStr}${w.rpe ? ` &nbsp;&middot;&nbsp; <span style="color:${getRPEColor(w.rpe)};font-weight:900;">RPE ${w.rpe}/10</span>` : ''}</div>
-    ${(() => {
-      // Sparkline — find previous attempts at same WOD label
-      const attempts = getHistory().filter(e => e.label === w.label && e.pd).slice(0,6).reverse();
-      if (attempts.length < 2) return '';
-      const vals = attempts.map(e => parseFloat(e.pd)||0);
-      const max = Math.max(...vals), min = Math.min(...vals);
-      const range = max - min || 1;
-      const W = 240, H = 48, pad = 6;
-      const pts = vals.map((v,i) => {
-        const x = pad + (i / (vals.length-1)) * (W - pad*2);
-        const y = H - pad - ((v - min) / range) * (H - pad*2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      }).join(' ');
-      const trend = vals[vals.length-1] >= vals[0] ? '#22C55E' : '#EF4444';
-      return `<div style="background:var(--surface2);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
-        <div style="font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--label);margin-bottom:6px;">${t('hist.modal.intensity.trend').replace('{n}', attempts.length)}</div>
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:48px;display:block;">
-          <polyline points="${pts}" fill="none" stroke="${trend}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          ${vals.map((v,i) => {
-            const x = pad + (i / (vals.length-1)) * (W - pad*2);
-            const y = H - pad - ((v - min) / range) * (H - pad*2);
-            return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${trend}"/>`;
-          }).join('')}
-        </svg>
-        <div style="display:flex;justify-content:space-between;font-size:.62rem;color:var(--label);margin-top:2px;">
-          <span>${attempts[0].pd} W/kg</span><span>${attempts[attempts.length-1].pd} W/kg \u2190 today</span>
-        </div>
-      </div>`;
-    })()}
+
     ${w.radar && sessionHasRadar(w) ? `<div class="modal-section" id="sig-section">
       <div class="modal-section-title">${t('hist.modal.sig.static')} <span style="font-size:.65rem;color:var(--label);font-weight:400;">${t('flip.hint')}</span></div>
       <div id="sig-radar-container"></div>
@@ -1884,6 +1856,22 @@ function openHistoryModal(idx) {
         </div>`;
       })()}
     </div>
+    ${(() => {
+      // Total elevation gain across all blocks — sums w.blockElevationGain
+      // ({blockIndex: meters}, real user-entered gain for uphill running/
+      // cycling blocks only). Card is omitted entirely when no block has
+      // real elevation data, same convention as the other optional cards.
+      const gainMap = w.blockElevationGain || {};
+      const totalGain = Object.values(gainMap).reduce((sum, m) => sum + (parseFloat(m) || 0), 0);
+      if (totalGain <= 0) return '';
+      return `<div class="modal-section">
+        <div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:10px;padding:10px 12px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M8 21l4-14 4 14M2 21h20M9 15h6"/></svg>
+          <span style="font-size:.68rem;font-weight:800;color:var(--label);text-transform:uppercase;letter-spacing:.05em;">${t('hist.modal.elevation') || 'Elevation Gain'}</span>
+          <span style="font-size:.95rem;font-weight:900;color:var(--text);margin-left:auto;">${Math.round(totalGain)}<span style="font-size:.68rem;color:var(--label);font-weight:600;"> m</span></span>
+        </div>
+      </div>`;
+    })()}
     <div class="modal-section">
       <div class="modal-section-title">${t('hist.modal.log.static')}</div>
 

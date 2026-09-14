@@ -1442,6 +1442,7 @@ var STRINGS = {
     // History modal static
     'hist.modal.sig.static':'Session Signature',
     'hist.modal.phys.static':'Physics Results',
+    'hist.modal.elevation': 'Elevation Gain',
     'hist.modal.eraw.title': 'Overall Efficiency',
     'result.workeff.title': 'Work Efficiency',
     'hist.modal.runeraw.title': 'Running Efficiency',
@@ -2166,6 +2167,7 @@ var STRINGS = {
     // History modal static
     'hist.modal.sig.static':'Firma de Sesión',
     'hist.modal.phys.static':'Resultados de Física',
+    'hist.modal.elevation': 'Ganancia de Elevación',
     'hist.modal.eraw.title': 'Eficiencia General',
     'result.workeff.title': 'Eficiencia de Trabajo',
     'hist.modal.runeraw.title': 'Eficiencia de Carrera',
