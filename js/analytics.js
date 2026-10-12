@@ -1353,7 +1353,7 @@ function renderAnalytics() {
   // real training data, producing a visibly smaller/collapsed shape
   // than the session signature's overlay (which correctly uses real
   // entries via the same helper).
-  const radarAvg = computeRadarAverage(rawData);
+  const radarAvg = computeRadarAverage(filterSessionsByRadarCategories(rawData));
 
   el.innerHTML = `
     <div class="chart-card" onclick="openPowerScatterFullscreen()">
@@ -1386,6 +1386,7 @@ function renderAnalytics() {
     </div>
     <div class="chart-card" onclick="openChartFullscreen(t('chart.radar'), 'profile')">
       <div class="chart-title">${t('chart.radar')} <span class="chart-expand-hint">${t('chart.expand')}</span></div>
+      <div id="radar-category-summary" style="font-size:.68rem;color:var(--label);margin-top:-4px;margin-bottom:6px;">${_radarCategorySummary()}</div>
       <canvas id="chart-profile" style="width:100%;display:block;margin:0 auto;"></canvas>
     </div>
     <div class="chart-card" onclick="openChartFullscreen(t('chart.movbias'), 'movbias')">
@@ -2857,8 +2858,61 @@ function computeRadarAverage(sessions) {
   return avg;
 }
 
-function getRadarMaxes() {
-  return {
+// ── Radar category filter ──
+// The 6-week radar and the Session Signature overlay can be restricted
+// to the same six automatic session categories the Engine Frontier uses
+// (getSessionCategory). State is independent from the Frontier's chips
+// (window._psActiveCategories) so changing one never moves the other.
+// Default = Metcon + Strength: uphill rides / runs set a very different
+// Mechanical Work scale (elevation work) and otherwise stretch the axis.
+function getRadarActiveCategories() {
+  if (!window._radarActiveCategories) {
+    window._radarActiveCategories = new Set(['metcon', 'strength']);
+  }
+  return window._radarActiveCategories;
+}
+
+function filterSessionsByRadarCategories(sessions) {
+  const cats = getRadarActiveCategories();
+  return sessions.filter(w => cats.has(getSessionCategory(w)));
+}
+
+function _radarCategorySummary() {
+  const cats = getRadarActiveCategories();
+  return Object.entries(SESSION_CATEGORY_LABELS)
+    .filter(([cat]) => cats.has(cat))
+    .map(([, key]) => t(key))
+    .join(' + ');
+}
+
+function _radarSixWeekSessions() {
+  const sixWeeksAgoStr = new Date(Date.now() - 42 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return getHistory().filter(w => w.date && w.date.slice(0, 10) >= sixWeeksAgoStr);
+}
+
+// Category of the session being drawn on the Session Signature radar.
+// sourceEntry = a saved entry (re-render from history); otherwise the
+// live builder blocks are used, with the elevation entered for them.
+function getRadarSessionCategory(fb, sourceEntry) {
+  try {
+    if (sourceEntry) return getSessionCategory(sourceEntry);
+    const live = _buildLiveCardioEntry();
+    return getSessionCategory({
+      blocks: live.blocks,
+      blockElevationGain: window._lastBlockElevationGain || {},
+      fb: parseFloat(fb) || 0
+    });
+  } catch (e) { return null; }
+}
+
+// categories (optional Set): when given, pd / wd / fb / internalLoad
+// full-scale = personal best among history sessions of those categories
+// (same "personal best = full scale" rule getPersonalBands uses, same
+// BM_PERSONAL_MIN minimum — below that the all-history value is kept).
+// cvIntensity (12) and td (5) stay fixed. No argument = unchanged
+// all-history behaviour (used for stored entry.radar values).
+function getRadarMaxes(categories) {
+  const base = {
     pd: getEffectiveBands('totalpower')?.max || 3.5,
     wd: getEffectiveBands('wd')?.max || 200,
     cvIntensity: 12, // MET — matches the realistic ceiling already established for the fbduration chart's gradient
@@ -2866,6 +2920,18 @@ function getRadarMaxes() {
     internalLoad: 200, // MET-min — a longer, sustained session at moderate-high intensity
     td: 5
   };
+  if (!categories || !categories.size) return base;
+  const vals = { pd: [], wd: [], fb: [], internalLoad: [] };
+  getHistory().forEach(w => {
+    if (!categories.has(getSessionCategory(w))) return;
+    const v = computeRadarValuesForSession(w);
+    Object.keys(vals).forEach(k => { if (v[k] > 0) vals[k].push(v[k]); });
+  });
+  const out = { ...base };
+  Object.keys(vals).forEach(k => {
+    if (vals[k].length >= BM_PERSONAL_MIN) out[k] = Math.max(...vals[k]);
+  });
+  return out;
 }
 
 function normalizeRadarAvg(avg, maxes) {
@@ -2982,8 +3048,75 @@ function render6WeekRadar(canvas, avg) {
   const ctx = canvas.getContext('2d');
   if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const values = normalizeRadarAvg(avg);
+  const values = normalizeRadarAvg(avg, getRadarMaxes(getRadarActiveCategories()));
   drawRadarFrame(canvas, values, '#22C55E');
+}
+
+
+// Chips above the fullscreen 6-week radar. Same behaviour as the Engine
+// Frontier chips (at least one stays selected) but with their own state.
+function _buildRadarCategoryChipsHtml() {
+  const active = getRadarActiveCategories();
+  return `<div id="radar-category-block" style="width:100%;">
+    <div id="radar-category-chips" style="display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 6px;">
+      ${Object.entries(SESSION_CATEGORY_LABELS).map(([cat, key]) => {
+        const on = active.has(cat);
+        return `<button onclick="_toggleRadarCategory('${cat}')" style="width:auto;margin:0;padding:5px 11px;border-radius:14px;font-size:.66rem;font-weight:700;font-family:inherit;cursor:pointer;border:1px solid ${on ? 'var(--brand)' : 'var(--glass-border)'};background:${on ? 'var(--brand)' : 'transparent'};color:${on ? '#fff' : 'var(--label)'};">${t(key) || cat}</button>`;
+      }).join('')}
+    </div>
+    <div style="font-size:.64rem;color:var(--label);padding:0 20px 4px;">${t('chart.radar.scalenote')}</div>
+    <div id="radar-empty-msg" style="display:none;font-size:.72rem;color:var(--label);padding:6px 20px;text-align:center;">${t('chart.radar.empty')}</div>
+  </div>`;
+}
+
+function _toggleRadarCategory(category) {
+  if (_radarAnimRunning) return;
+  const active = getRadarActiveCategories();
+  if (active.has(category)) {
+    if (active.size === 1) return;
+    active.delete(category);
+  } else {
+    active.add(category);
+  }
+  const block = document.getElementById('radar-category-block');
+  if (block) block.outerHTML = _buildRadarCategoryChipsHtml();
+  _refreshRadarFullscreen();
+}
+
+// Recomputes everything the fullscreen radar shows from the current
+// category selection: the static 6-week shape, the empty-selection
+// message, and the 12-week animation windows.
+function _refreshRadarFullscreen() {
+  const canvas = document.getElementById('chart-fs-canvas');
+  if (!canvas) return;
+  const sessions = filterSessionsByRadarCategories(_radarSixWeekSessions());
+  const avg = computeRadarAverage(sessions);
+  _fsChartData = _fsChartData || {};
+  _fsChartData.profileAvg = avg;
+  render6WeekRadar(canvas, avg);
+  const summary = document.getElementById('radar-category-summary');
+  if (summary) summary.textContent = _radarCategorySummary();
+  const emptyMsg = document.getElementById('radar-empty-msg');
+  if (emptyMsg) emptyMsg.style.display = sessions.length ? 'none' : 'block';
+
+  const controls = document.getElementById('radar-anim-controls');
+  const windows = getRollingRadarWindows(filterSessionsByRadarCategories(getHistory()));
+  // Last frame must be the exact object the static radar just drew —
+  // see playRadarAnimation / the original jump-elimination reasoning.
+  if (windows.length) windows[windows.length - 1].avg = avg;
+  if (controls) {
+    if (windows.length > 1) {
+      controls.style.display = 'block';
+      const btn = document.getElementById('radar-anim-play');
+      if (btn) btn.textContent = t('chart.radar.play');
+      const label = document.getElementById('radar-anim-label');
+      if (label) label.textContent = '';
+      _radarAnimWindows = windows;
+    } else {
+      controls.style.display = 'none';
+      _radarAnimWindows = null;
+    }
+  }
 }
 
 // Global state for the 12-week radar trend animation
@@ -3016,7 +3149,7 @@ function playRadarAnimation() {
   _radarAnimRunning = true;
   if (btn) btn.disabled = true;
 
-  const maxes = getRadarMaxes();
+  const maxes = getRadarMaxes(getRadarActiveCategories());
   const frames = windows.map(w => normalizeRadarAvg(w.avg, maxes));
   const FRAME_MS = 800; // time per window-to-window transition
   const totalTransitions = frames.length - 1;
@@ -4108,8 +4241,8 @@ function openChartFullscreen(title, key) {
 
   if (key === 'profile' && _fsChartData?.profileAvg) {
     const canvas = document.getElementById('chart-fs-canvas');
-    const controls = document.getElementById('radar-anim-controls');
-    wrap.style.height = '380px';
+    wrap.insertAdjacentHTML('afterbegin', _buildRadarCategoryChipsHtml());
+    wrap.style.height = 'auto';
     wrap.style.display = 'flex';
     wrap.style.flexDirection = 'column';
     wrap.style.alignItems = 'center';
@@ -4118,30 +4251,7 @@ function openChartFullscreen(title, key) {
       const size = Math.min((wrap.offsetWidth || 340) - 20, 280);
       canvas.style.width = size + 'px';
       canvas.style.height = (size + 30) + 'px';
-      render6WeekRadar(canvas, _fsChartData.profileAvg);
-      // Show the 12-week trend animation control if there's enough history
-      const windows = getRollingRadarWindows(getHistory());
-      // Force the last window's avg to be the EXACT same object the
-      // static radar above just rendered — not a fresh approximation
-      // computed independently inside getRollingRadarWindows (which
-      // uses its own date-boundary math and could disagree with
-      // profileAvg by a fraction of a percent at the edges). This is
-      // what actually eliminates the jump: the animation's true final
-      // frame becomes the identical values shown the instant playback
-      // ends, not merely a close approximation of them.
-      if (windows.length) windows[windows.length - 1].avg = _fsChartData.profileAvg;
-      if (controls) {
-        if (windows.length > 1) {
-          controls.style.display = 'block';
-          const btn = document.getElementById('radar-anim-play');
-          if (btn) btn.textContent = t('chart.radar.play');
-          const label = document.getElementById('radar-anim-label');
-          if (label) label.textContent = '';
-          _radarAnimWindows = windows;
-        } else {
-          controls.style.display = 'none';
-        }
-      }
+      _refreshRadarFullscreen();
     }, 50);
     return;
   }
@@ -4531,7 +4641,7 @@ function _buildAnalyticsRadarBack(pd, wd, cvIntensity, fb, internalLoad, td) {
   const back = document.getElementById('radar-back-content');
   if (!back) return;
   const sixWeeksAgoStr = new Date(Date.now()-42*24*60*60*1000).toISOString().slice(0,10);
-  const recentHist = getHistory().filter(h=>h.date&&h.date.slice(0,10)>=sixWeeksAgoStr&&h.pd);
+  const recentHist = filterSessionsByRadarCategories(getHistory().filter(h=>h.date&&h.date.slice(0,10)>=sixWeeksAgoStr&&h.pd));
   const avg = computeRadarAverage(recentHist);
   const avgOf = key => avg[key] > 0 ? avg[key] : null;
   const radarLabels = getRadarAxisLabels();
@@ -4578,7 +4688,7 @@ function _buildAnalyticsRadarBack(pd, wd, cvIntensity, fb, internalLoad, td) {
     });
   }
 }
-function renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, td) {
+function renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, td, sessionCat) {
   const card = document.getElementById('radar-card');
   const canvas = document.getElementById('radarChart');
   if (!card || !canvas) return;
@@ -4592,17 +4702,22 @@ function renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, td) {
 
   // Normalise each metric 0–1 against max plausible values
   // Use personal band maxes when available, fall back to fixed
-  const maxes = getRadarMaxes();
+  // Scale = personal best within THIS session's own category (an uphill
+  // ride is drawn against uphill rides, a metcon against metcons). The
+  // stored _lastSessionRadar / entry.radar values below keep the default
+  // all-history scale so nothing already saved changes meaning.
+  const defaultMaxes = getRadarMaxes();
+  const maxes = sessionCat ? getRadarMaxes(new Set([sessionCat])) : defaultMaxes;
 
   // Store normalised values back into _lastSessionRadar so history card matches
   if (window._lastSessionRadar) {
     window._lastSessionRadar = {
-      pd: Math.min(1, Math.max(0, (pd||0) / maxes.pd)),
-      wd: Math.min(1, Math.max(0, (wd||0) / maxes.wd)),
-      cvIntensity: Math.min(1, Math.max(0, (cvIntensity||0) / maxes.cvIntensity)),
-      fb: Math.min(1, Math.max(0, (fb||0) / maxes.fb)),
-      internalLoad: Math.min(1, Math.max(0, (internalLoad||0) / maxes.internalLoad)),
-      td: Math.min(1, Math.max(0, (td||0) / maxes.td)),
+      pd: Math.min(1, Math.max(0, (pd||0) / defaultMaxes.pd)),
+      wd: Math.min(1, Math.max(0, (wd||0) / defaultMaxes.wd)),
+      cvIntensity: Math.min(1, Math.max(0, (cvIntensity||0) / defaultMaxes.cvIntensity)),
+      fb: Math.min(1, Math.max(0, (fb||0) / defaultMaxes.fb)),
+      internalLoad: Math.min(1, Math.max(0, (internalLoad||0) / defaultMaxes.internalLoad)),
+      td: Math.min(1, Math.max(0, (td||0) / defaultMaxes.td)),
       _normalised: true,
       _v: 3 // bumped from 2 — axes changed (mc/rl -> cvIntensity/internalLoad), not just the headroom-removal migration v2 already handles
     };
@@ -4619,7 +4734,7 @@ function renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, td) {
   // same timezone-safe approach the standalone 6-week radar uses, so
   // both charts define "last 6 weeks" identically at the boundary.
   const sixWeeksAgoStr = new Date(Date.now() - 42*24*60*60*1000).toISOString().slice(0,10);
-  const recentHist = getHistory().filter(h => h.date && h.date.slice(0,10) >= sixWeeksAgoStr && h.pd);
+  const recentHist = filterSessionsByRadarCategories(getHistory().filter(h => h.date && h.date.slice(0,10) >= sixWeeksAgoStr && h.pd));
   const avgRaw = computeRadarAverage(recentHist);
   const hasAvgOverlay = recentHist.length > 0;
   const avgValues = RADAR_AXIS_KEYS.map(k => Math.min(1, Math.max(0, (avgRaw[k]||0) / maxes[k])));
@@ -4757,7 +4872,11 @@ function renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, td) {
       legendEl.style.display = 'flex';
       legendEl.innerHTML = `
         <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${brandCol};margin-right:4px;vertical-align:middle;"></span>${t('radar.legend.today') || 'Today'}</span>
-        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,.75);margin-right:4px;vertical-align:middle;"></span>${t('radar.legend.sixwk') || '6-Wk Avg'}</span>`;
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,.75);margin-right:4px;vertical-align:middle;"></span>${t('radar.legend.sixwk') || '6-Wk Avg'} (${_radarCategorySummary()})</span>`;
+      if (sessionCat && SESSION_CATEGORY_LABELS[sessionCat]) {
+        legendEl.innerHTML += `<span>${t('radar.legend.scale')}: ${t(SESSION_CATEGORY_LABELS[sessionCat])}</span>`;
+      }
+      legendEl.style.flexWrap = 'wrap';
     } else {
       legendEl.style.display = 'none';
       legendEl.innerHTML = '';

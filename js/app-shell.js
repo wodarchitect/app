@@ -122,7 +122,7 @@ function toggleTheme() {
       const r = window._lastRadarRaw;
       // Preserve flip state
       const backVisible = document.getElementById('radar-flip-back')?.style.display === 'block';
-      renderRadarChart(r.pd, r.wd, r.cvIntensity, r.fb, r.internalLoad, r.td);
+      renderRadarChart(r.pd, r.wd, r.cvIntensity, r.fb, r.internalLoad, r.td, r.cat);
       if (backVisible) {
         document.getElementById('radar-flip-front').style.display = 'none';
         document.getElementById('radar-flip-back').style.display = 'block';

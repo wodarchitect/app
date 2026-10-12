@@ -948,8 +948,9 @@ function renderAllBMBars(sourceEntry) {
   const cvIntensity = cvResult ? cvResult.met : 0;
   if (cvIntensity > 0) renderBMBar('bm-aeropd', 'cvintensity', cvIntensity, exp);
   const internalLoad = cvResult ? cvResult.metMinutes : 0;
-  renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, tdForRadar);
-  window._lastRadarRaw = { pd, wd, cvIntensity, fb, internalLoad, td: tdForRadar };
+  const radarCat = getRadarSessionCategory(fb, sourceEntry);
+  renderRadarChart(pd, wd, cvIntensity, fb, internalLoad, tdForRadar, radarCat);
+  window._lastRadarRaw = { pd, wd, cvIntensity, fb, internalLoad, td: tdForRadar, cat: radarCat };
   window._lastCVEndurance = cvResult || null;
 }
 
