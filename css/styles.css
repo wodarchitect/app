@@ -833,7 +833,11 @@
       padding: 0 14px;
     }
     .accordion-section.open .accordion-body { max-height: 800px; padding: 0 14px 14px; }
-    .accordion-section.results-accordion.open .accordion-body { max-height: 3000px; }
+    /* Was 3000px with overflow:hidden — a session with ~5+ blocks (each block's
+       result fields, RPE slider, HR and elevation inputs) is taller than that, so
+       the last block(s) were silently clipped and couldn't be edited. Very large
+       cap instead of 'none' so the open/close height transition still works. */
+    .accordion-section.results-accordion.open .accordion-body { max-height: 20000px; }
 
     /* ── Movement rows (level 3 — tap to expand editor) ── */
     .movement-row {
