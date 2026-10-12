@@ -727,6 +727,7 @@ function softResetCurrentWorkout() {
   document.getElementById('builder-list-view')?.classList.remove('box-session-locked');
   renderBlockList();
   saveWorkoutState();
+  _clearResultDraft();
   // Brief visual confirmation
   const rb = document.getElementById('reset-btn');
   rb.innerText = '✓ Reset'; setTimeout(() => { rb.innerText = '⟳ Reset'; }, 1200);
@@ -4453,7 +4454,15 @@ function saveWorkoutState() {
         bwLocked: mb.querySelector('.m-wt')?.disabled || false,
         wtLadderType:  mb.querySelector('.m-wt-ladder-type')?.value  || 'fixed',
         wtLadderInc:   mb.querySelector('.m-wt-ladder-inc')?.value   || '5',
-        controlledDescent: mb.querySelector('.m-controlled-descent')?.value !== '0'
+        controlledDescent: mb.querySelector('.m-controlled-descent')?.value !== '0',
+        // Real values behind the 999 "Max" sentinels, plus the rep-scheme
+        // fields. Previously not saved here, so after any reload a Max-reps
+        // movement came back as 999 with no real value entered behind it.
+        maxRepsEntered: parseFloat(mb.querySelector('.m-reps')?.dataset.maxRepsEntered) || 0,
+        maxKgEntered:   parseFloat(mb.querySelector('.m-wt')?.dataset.maxKgEntered) || 0,
+        repsOverride:   mb.querySelector('.m-reps-override')?.value || '0',
+        repsScheme:     mb.querySelector('.m-reps-scheme')?.value   || 'fixed',
+        repsInc:        mb.querySelector('.m-reps-inc')?.value      || '5'
       });
     });
     // Profile inputs
@@ -4621,6 +4630,14 @@ function restoreWorkoutState() {
         <input type="hidden" class="m-reps-inc" value="${mv.repsInc||5}">
         ${makePicker('m-wt', parseFloat(mv.kg)||0, VALS.kg, 'Weight (kg)', disabledAttr)}`;
       mList.appendChild(d);
+      if (mv.maxKgEntered) {
+        const wtI = d.querySelector('.m-wt');
+        if (wtI) wtI.dataset.maxKgEntered = mv.maxKgEntered;
+      }
+      if (mv.maxRepsEntered) {
+        const rI = d.querySelector('.m-reps');
+        if (rI) rI.dataset.maxRepsEntered = mv.maxRepsEntered;
+      }
     });
   });
 
@@ -4665,7 +4682,7 @@ function serializeBlocksForTemplate() {
     };
     b.querySelectorAll('.movement-block').forEach(mb => {
       const repsInp = mb.querySelector('.m-reps');
-      const wtInp   = mb.querySelector('.m-wt input');
+      const wtInp   = mb.querySelector('.m-wt'); // .m-wt IS the input (dataset.maxKgEntered is written on it) — the old '.m-wt input' selector matched nothing
       const rawKg   = parseFloat(mb.querySelector('.m-wt')?.value)||0;
       const kg      = rawKg === 999 ? 999 : rawKg; // preserve 999 sentinel in template
       bd.movements.push({name:mb.querySelector('input[type="hidden"]')?.value||'',
@@ -5455,3 +5472,107 @@ function renderTemplatePanel() {
     });
   }, 100);
 }
+
+
+/* ════════════════════════════════════════════════════
+   BACKGROUND-SAFE PERSISTENCE
+   Android can discard this PWA while it is backgrounded; reopening is
+   then a cold start. saveWorkoutState() already saves the builder on
+   edits, but (1) it only runs from individual edit handlers, so any
+   change that misses a handler is lost, (2) the result-entry fields
+   (RPE, manual HR, elevation) only ever lived in window memory, and
+   (3) the app always reopened on the first tab. This block adds:
+   - a save of the builder when the page is hidden + every 5 s,
+   - persistence of the result-entry fields,
+   - restoring the tab you were on (if reopened within 6 hours).
+════════════════════════════════════════════════════ */
+const WOD_RESULTS_KEY = 'wod_results_draft_v1';
+const WOD_TAB_KEY = 'wod_last_tab_v1';
+let _persistArmed = false;
+
+function _captureResultEntryFromDom() {
+  // Same captures renderAnalyticsResults() does before it rebuilds the
+  // accordion — only overwrite a window var when its inputs exist.
+  const c = document.getElementById('analytics-results-section');
+  if (!c) return;
+  const rpeEls = c.querySelectorAll('[id^="result-rpe-slider-"]');
+  if (rpeEls.length) {
+    window._savedAnalyticsRpe = {};
+    rpeEls.forEach(el => { window._savedAnalyticsRpe[el.id.replace('result-rpe-slider-', '')] = { value: el.value, touched: el.dataset.touched }; });
+  }
+  const hrEls = c.querySelectorAll('[id^="result-manualhr-avg-"]');
+  if (hrEls.length) {
+    window._savedAnalyticsManualHr = {};
+    hrEls.forEach(el => {
+      const idx = el.id.replace('result-manualhr-avg-', '');
+      window._savedAnalyticsManualHr[idx] = { avg: el.value || null, max: c.querySelector('#result-manualhr-max-' + idx)?.value || null };
+    });
+  }
+  const elEls = c.querySelectorAll('[id^="result-elevation-"]');
+  if (elEls.length) {
+    window._savedAnalyticsElevation = {};
+    elEls.forEach(el => { window._savedAnalyticsElevation[el.id.replace('result-elevation-', '')] = el.value || null; });
+  }
+}
+
+function _persistResultEntry() {
+  try {
+    _captureResultEntryFromDom();
+    const rpe = window._savedAnalyticsRpe, hr = window._savedAnalyticsManualHr, elev = window._savedAnalyticsElevation;
+    const has = o => o && Object.keys(o).length;
+    if (!has(rpe) && !has(hr) && !has(elev)) return;
+    localStorage.setItem(WOD_RESULTS_KEY, JSON.stringify({ rpe: rpe || null, hr: hr || null, elev: elev || null, savedAt: Date.now() }));
+  } catch (e) {}
+}
+
+// Called after a session is saved to history and on Reset: removes the
+// stored copy AND the in-memory copy, otherwise the next background
+// save would write the finished session's values straight back.
+function _clearResultDraft() {
+  try { localStorage.removeItem(WOD_RESULTS_KEY); } catch (e) {}
+  window._savedAnalyticsRpe = {};
+  window._savedAnalyticsManualHr = {};
+  window._savedAnalyticsElevation = {};
+}
+
+function _restoreResultEntry() {
+  try {
+    const d = JSON.parse(localStorage.getItem(WOD_RESULTS_KEY));
+    if (!d || !d.savedAt || Date.now() - d.savedAt > 24 * 3600 * 1000) return;
+    if (d.rpe) window._savedAnalyticsRpe = d.rpe;
+    if (d.hr) window._savedAnalyticsManualHr = d.hr;
+    if (d.elev) window._savedAnalyticsElevation = d.elev;
+  } catch (e) {}
+}
+
+function _persistAllNow() {
+  if (!_persistArmed) return;
+  try { saveWorkoutState(); } catch (e) {}
+  _persistResultEntry();
+  try { localStorage.setItem(WOD_TAB_KEY, JSON.stringify({ idx: currentTab, at: Date.now() })); } catch (e) {}
+}
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') _persistAllNow(); });
+window.addEventListener('pagehide', _persistAllNow);
+setInterval(_persistAllNow, 5000);
+
+window.addEventListener('load', () => {
+  // Wait for the app's own startup (restoreWorkoutState + switchTab(0))
+  // to finish before restoring anything on top of it, and only start
+  // background saves afterwards so an unfinished startup can never
+  // overwrite a good saved state with an empty one.
+  setTimeout(() => {
+    // Empty the results section first: renderAnalyticsResults() copies
+    // any existing slider/inputs into the saved-values vars before it
+    // rebuilds, which would overwrite the values restored just below
+    // with the freshly built default sliders.
+    const _resSec = document.getElementById('analytics-results-section');
+    if (_resSec) _resSec.innerHTML = '';
+    _restoreResultEntry();
+    try {
+      const tab = JSON.parse(localStorage.getItem(WOD_TAB_KEY));
+      if (tab && Number.isInteger(tab.idx) && tab.idx > 0 && tab.idx <= 5 && Date.now() - tab.at < 6 * 3600 * 1000) switchTab(tab.idx);
+    } catch (e) {}
+    _persistArmed = true;
+  }, 1200);
+});

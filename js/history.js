@@ -375,6 +375,7 @@ function _finishSaveToHistory(wodLabel, pd, wd, mc, fb, td, rl, detail, _blocksS
     hist.unshift(entry);
     if (hist.length > 50) hist.pop();
     saveHistory(hist);
+    if (typeof _clearResultDraft === 'function') _clearResultDraft(); // session is saved — drop the stored result-entry draft
     // Cache unlock date when 5th qualifying session is saved
     const qualHist = hist.filter(w => w.pd && parseFloat(w.pd) > 0);
     if (qualHist.length === BM_PERSONAL_MIN + 1 && !localStorage.getItem('wod_profile_unlocked_at')) {
