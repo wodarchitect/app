@@ -956,6 +956,7 @@ var STRINGS = {
     'hl.top.1rm':            'Top 1RM',
     'hl.cardio.pr':          'Cardio PR',
     'hl.sessions':           'Sessions',
+    'hl.consistency':        'Consistency',
     'hl.avg.wkg':            'Avg W/kg',
     'hl.vo2max':             'VO₂max',
     'hl.estimated':          'Population estimate',
