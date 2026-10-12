@@ -709,6 +709,15 @@ function startCountdown() {
 function initBlock() {
   countingDown = false;
   isPaused = false;  // ensure not paused when block starts
+  // Stamp the block's real start here. _hrBlockStartMs was previously only
+  // set at session press (before the 10s opening countdown) and at the
+  // moment the previous block finished (the start of the rest), so every
+  // recorded block window sat early by the countdown (~12s on block 1) or
+  // the rest length (~20s on later blocks), and a manual swipe-finish
+  // measured elapsed time from that same early stamp. Everything that
+  // reads this (per-block HR attribution, cardio-toggle attribution,
+  // blockTimeWindows) was shifted by that amount.
+  window._hrBlockStartMs = Date.now();
   lastRoundStartSec = 0;
   // Don't reset splits — accumulate across blocks, tagged with block number
   // _roundSplits entries will have block: activeBlockIdx+1

@@ -421,7 +421,9 @@ function getCardioEnergy(blocks, bw) {
       const p = MASTER_DB[key];
       if (!p || !p.cardio) return;
 
-      const presReps = parseFloat(mv.querySelector('.m-reps')?.value) || 0;
+      const _rawPresReps = parseFloat(mv.querySelector('.m-reps')?.value) || 0;
+      const _isMaxRepsC = _rawPresReps === 999; // "Max reps" sentinel
+      const presReps = _isMaxRepsC ? (parseFloat(mv.querySelector('.m-reps')?.dataset.maxRepsEntered) || 0) : _rawPresReps;
       if (presReps <= 0) return;
 
       // Use ladder total reps if ladder active (completed rounds only), otherwise base × rounds
@@ -437,9 +439,11 @@ function getCardioEnergy(blocks, bw) {
         const stationCount = allMovements.length || 1;
         effRounds = Math.floor(rounds / stationCount) + (mvIdx < (rounds % stationCount) ? 1 : 0);
       }
-      const totalReps = ladderType2 !== 'fixed'
-        ? getLadderTotalReps(block, presReps, effRounds, 0)  // cardio doesn't use extra reps
-        : presReps * effRounds;
+      const totalReps = _isMaxRepsC
+        ? presReps  // Max reps: entered number is the total, not per-round
+        : ladderType2 !== 'fixed'
+          ? getLadderTotalReps(block, presReps, effRounds, 0)  // cardio doesn't use extra reps
+          : presReps * effRounds;
       const cardioType = p.cardio;
       const ref = p.cardioRef;
 
@@ -543,14 +547,16 @@ function reconstructCardioEnergy(entry, bw) {
     movements.forEach((mv, mvIdx) => {
       const p = MASTER_DB[mv.name];
       if (!p || !p.cardio) return;
-      const presReps = parseFloat(mv.reps) || 0;
+      const _rawPresReps = parseFloat(mv.reps) || 0;
+      const _isMaxRepsM = _rawPresReps === 999; // "Max reps" sentinel
+      const presReps = _isMaxRepsM ? (parseFloat(mv.maxRepsEntered) || 0) : _rawPresReps;
       if (presReps <= 0) return;
       let effRounds = rounds;
       if (mode === 'exmom') {
         const stationCount = movements.length || 1;
         effRounds = Math.floor(rounds / stationCount) + (mvIdx < (rounds % stationCount) ? 1 : 0);
       }
-      const totalReps = presReps * effRounds;
+      const totalReps = _isMaxRepsM ? presReps : presReps * effRounds;
       const ref = p.cardioRef;
       // Run and Row are handled separately (see getSessionRunAeroKcal,
       // getSessionRowAeroKcal) with pace-derived MET instead of this

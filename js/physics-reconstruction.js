@@ -872,7 +872,11 @@ function getSessionCardioInstances(entry) {
       if (actualSec > 0) {
         const p = MASTER_DB[cardioMovements[0].name];
         const ref = p.cardioRef || 1;
-        const pres = parseFloat(cardioMovements[0].reps) || 0;
+        const _rawPres = parseFloat(cardioMovements[0].reps) || 0;
+        // 999 = "Max reps" sentinel — use what was actually entered, and
+        // skip the block if nothing was entered rather than inventing ~100 km.
+        const pres = _rawPres === 999 ? (parseFloat(cardioMovements[0].maxRepsEntered) || 0) : _rawPres;
+        if (_rawPres === 999 && pres <= 0) return;
         instances.push({ cardioType: p.cardio, totalM: pres * ref, secs: actualSec, isReal: true, blockIndex });
         return;
       }
@@ -883,7 +887,9 @@ function getSessionCardioInstances(entry) {
       const p = MASTER_DB[mv.name];
       if (!p) return;
       const cardioType = p.cardio;
-      const pres = parseFloat(mv.reps) || 0;
+      const _rawPres = parseFloat(mv.reps) || 0;
+      const isMaxReps = _rawPres === 999; // "Max reps" sentinel
+      const pres = isMaxReps ? (parseFloat(mv.maxRepsEntered) || 0) : _rawPres;
       // Every movement in the rotation consumes its share of the partial
       // round (ep) in sequence, regardless of cardio/non-cardio — ep
       // represents how far into the prescribed order the athlete actually
@@ -895,7 +901,11 @@ function getSessionCardioInstances(entry) {
       } else if (mode === 'exmom') {
         const stationCount = allMovements.length || 1;
         const stationRounds = Math.floor(r / stationCount);
-        reps = pres * Math.max(1, stationRounds);
+        reps = isMaxReps ? pres : pres * Math.max(1, stationRounds);
+      } else if (isMaxReps) {
+        // Max reps: the entered number IS the total, not a per-round count
+        reps = pres;
+        ep = 0;
       } else {
         const base = pres * r;
         const wf = Math.min(ep, pres);
@@ -1423,7 +1433,12 @@ function _buildLiveCardioEntry() {
     },
     movements: [...b.querySelectorAll('.movement-block')].map(mb => ({
       name: mb.querySelector('input[type="hidden"]')?.value || '',
-      reps: mb.querySelector('.m-reps')?.value || '0'
+      reps: mb.querySelector('.m-reps')?.value || '0',
+      // Max-reps movements store the 999 sentinel in .m-reps; the number the
+      // athlete actually entered lives in dataset.maxRepsEntered. Without it
+      // here, getSessionCardioInstances() had only the sentinel to go on and
+      // treated "Max Run" as 999 x 100m = ~100 km.
+      maxRepsEntered: parseFloat(mb.querySelector('.m-reps')?.dataset.maxRepsEntered) || 0
     }))
   }));
   const bw = parseFloat(document.getElementById('global-w')?.value) || 0;
