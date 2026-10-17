@@ -641,12 +641,38 @@ function getPersonalBands(metric) {
   };
 }
 
+// Display ceiling for Cardio Intensity (MET) = the athlete's own aerobic
+// ceiling, VO2max / 3.5 (1 MET = 3.5 mL/kg/min). Uses the VO2max in the
+// Profile; when none is set, 52 mL/kg/min (about 14.9 MET) so the scale
+// is never undefined. This is a DISPLAY scale only (radar axis and the
+// fallback benchmark bands) — the MET calculation itself
+// (relIntensity * vo2max / 3.5, see _computeBlockOverheadAndCV) is
+// already bounded by this same value and is not changed by it.
+const DEFAULT_VO2MAX_FOR_SCALE = 52;
+function getMetCeiling() {
+  const v = parseFloat(document.getElementById('global-vo2max')?.value);
+  return (v > 0 ? v : DEFAULT_VO2MAX_FOR_SCALE) / 3.5;
+}
+
 function getEffectiveBands(metric) {
   // Use personal percentile bands for pd, wd, mc, fb, totalpower
   // Keep fixed bands for rl, td (already normalised scales)
   if (['pd','wd','mc','fb','totalpower','cvintensity'].includes(metric)) {
     const personal = getPersonalBands(metric);
     if (personal) return personal;
+  }
+  if (metric === 'cvintensity') {
+    // Fallback (fewer than BM_PERSONAL_MIN sessions): same tier
+    // proportions as the old fixed 0-5-7-9-12 bands, stretched to the
+    // athlete's own MET ceiling instead of a flat 12.
+    const c = getMetCeiling();
+    return {
+      beginner:     [0,            c * 5 / 12],
+      intermediate: [c * 5 / 12,   c * 7 / 12],
+      advanced:     [c * 7 / 12,   c * 9 / 12],
+      elite:        [c * 9 / 12,   c],
+      max: c
+    };
   }
   return BM_BANDS[metric];
 }

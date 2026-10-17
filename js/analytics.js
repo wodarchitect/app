@@ -2909,13 +2909,13 @@ function getRadarSessionCategory(fb, sourceEntry) {
 // full-scale = personal best among history sessions of those categories
 // (same "personal best = full scale" rule getPersonalBands uses, same
 // BM_PERSONAL_MIN minimum — below that the all-history value is kept).
-// cvIntensity (12) and td (5) stay fixed. No argument = unchanged
+// cvIntensity (VO2max / 3.5 MET) and td (5) stay fixed. No argument = unchanged
 // all-history behaviour (used for stored entry.radar values).
 function getRadarMaxes(categories) {
   const base = {
     pd: getEffectiveBands('totalpower')?.max || 3.5,
     wd: getEffectiveBands('wd')?.max || 200,
-    cvIntensity: 12, // MET — matches the realistic ceiling already established for the fbduration chart's gradient
+    cvIntensity: getMetCeiling(), // MET — athlete's own aerobic ceiling (VO2max / 3.5; 52 mL/kg/min default), see physics-core.js
     fb: getEffectiveBands('fb')?.max || 200,
     internalLoad: 200, // MET-min — a longer, sustained session at moderate-high intensity
     td: 5
