@@ -591,34 +591,84 @@ function closeVbtTestPanel() {
 // needs no new UI interaction at all beyond using the app normally.
 const VBT_CAPTURE_KEY = 'wod_vbt_test_capture';
 
-function vbtSaveCapture() {
-  const capture = {
-    savedAt: new Date().toISOString(),
-    samples: window._vbtSamples || [],
-    cardioIntervals: window._cardioIntervals || [],
-    blockTimeWindows: window._blockTimeWindows || [],
-    // Diagnostics for directly checking, rather than assuming, whether
-    // packets were arriving cleanly — notificationLengths should read a
-    // consistent 20 throughout if the device's byte stream aligns with
-    // BLE notification boundaries; resyncSkipLog should stay empty or
-    // near-empty if it does. Either one showing otherwise would be real,
-    // direct evidence of the fragmentation this session's fix targets,
-    // rather than something inferred after the fact.
-    notificationLengths: window._vbtNotificationLengths || [],
-    resyncSkipLog: window._vbtResyncSkipLog || []
-  };
+// Storage is limited to a few MB per app (browser quota, shared with
+// history, drafts and everything else). A long or 50 Hz capture can
+// exceed it; the write is then rejected and the PREVIOUS capture stays
+// under the same key — which is exactly how "Show" ended up displaying
+// the old session after a failed Save. So: try the full capture, then a
+// compact form (numbers rounded, bulky diagnostic lists replaced by
+// summaries), and if storage still refuses, keep the capture in memory
+// (window._vbtPendingCapture) so Show can display it directly. The
+// result is written into the debug box so it can't be missed like a toast.
+function _vbtRoundSamples(samples) {
+  const r = (v, d) => (typeof v === 'number' ? +v.toFixed(d) : v);
+  return samples.map(s => ({
+    ts: s.ts, az: r(s.az, 3), ax: r(s.ax, 3), ay: r(s.ay, 3),
+    wx: r(s.wx, 1), wy: r(s.wy, 1), wz: r(s.wz, 1),
+    roll: r(s.roll, 2), pitch: r(s.pitch, 2), yaw: r(s.yaw, 2)
+  }));
+}
+
+function _vbtStorageReport() {
+  let total = 0; const sizes = [];
   try {
-    localStorage.setItem(VBT_CAPTURE_KEY, JSON.stringify(capture));
-    return true;
-  } catch (e) {
-    console.error('[VBT] Capture save failed:', e);
-    return false;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i), len = (localStorage.getItem(k) || '').length + k.length;
+      total += len; sizes.push([k, len]);
+    }
+  } catch (e) {}
+  sizes.sort((a, b) => b[1] - a[1]);
+  return { totalKB: Math.round(total / 1024), top: sizes.slice(0, 4).map(([k, n]) => `${k}=${Math.round(n / 1024)}KB`).join(', ') };
+}
+
+function vbtSaveCapture() {
+  const out = document.getElementById('debug-output');
+  const say = msg => { if (out) out.value = msg; };
+  const samples = window._vbtSamples || [];
+  const lens = window._vbtNotificationLengths || [];
+  const skips = window._vbtResyncSkipLog || [];
+  const base = {
+    savedAt: new Date().toISOString(),
+    cardioIntervals: window._cardioIntervals || [],
+    blockTimeWindows: window._blockTimeWindows || []
+  };
+  const attempts = [
+    { label: 'full', capture: { ...base, samples, notificationLengths: lens, resyncSkipLog: skips } },
+    // Same data, smaller: rounded numbers; diagnostics reduced to what they were for.
+    { label: 'compact', capture: { ...base, compact: true, samples: _vbtRoundSamples(samples),
+        notificationLengthsSummary: { count: lens.length, distinct: [...new Set(lens)] },
+        resyncSkipCount: skips.length, resyncSkipLog: skips.slice(0, 20) } }
+  ];
+  let lastErr = null;
+  for (const at of attempts) {
+    let json;
+    try { json = JSON.stringify(at.capture); } catch (e) { lastErr = e; continue; }
+    try {
+      localStorage.setItem(VBT_CAPTURE_KEY, json);
+      window._vbtPendingCapture = null;
+      say(`SAVED (${at.label}) at ${new Date().toLocaleTimeString()} — ${samples.length} samples, ${(json.length / 1024).toFixed(0)} KB. Now tap Show VBT Capture.`);
+      return true;
+    } catch (e) { lastErr = e; }
   }
+  // Storage refused both forms. Keep the capture in memory so Show can
+  // still display it; it is lost if the app is closed or reloaded first.
+  window._vbtPendingCapture = attempts[1].capture;
+  const rep = _vbtStorageReport();
+  const compactKB = (() => { try { return Math.round(JSON.stringify(attempts[1].capture).length / 1024); } catch (e) { return '?'; } })();
+  console.error('[VBT] Capture save failed:', lastErr);
+  say(`SAVE FAILED — ${lastErr ? lastErr.name + ': ' + lastErr.message : 'unknown error'}\n` +
+      `Samples in memory: ${samples.length}. Compact capture ≈ ${compactKB} KB. App storage already used ≈ ${rep.totalKB} KB (largest: ${rep.top}).\n` +
+      `The capture is held in memory — tap Show VBT Capture now (before closing the app) and copy it.`);
+  return false;
 }
 
 function _debugShowVbtCapture() {
   const out = document.getElementById('debug-output');
   if (!out) return;
+  // A capture that storage refused is shown directly from memory.
+  if (window._vbtPendingCapture) {
+    try { out.value = JSON.stringify(window._vbtPendingCapture); return; } catch (e) {}
+  }
   const raw = localStorage.getItem(VBT_CAPTURE_KEY);
   if (!raw) { out.value = 'No VBT capture saved yet — tap "Save VBT Capture" after a test session first.'; return; }
   out.value = raw;
