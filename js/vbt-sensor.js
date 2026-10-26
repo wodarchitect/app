@@ -674,6 +674,77 @@ function _debugShowVbtCapture() {
   out.value = raw;
 }
 
+// ── Movement-class windows: REST / RUN / WORK ──
+// Rule-based classifier validated on captures 2-8 (single athlete, right
+// forearm, 10 and 50 Hz). 6 s windows, 3 s step, per window:
+//   REST: |a| std < 0.3 m/s2 AND gyro RMS < 15 deg/s
+//   RUN : dominant |a| frequency 2.3-3.1 Hz AND |a| std > 3 AND gyro RMS > 100
+//   WORK: anything else (mechanical work, walking, transitions)
+// A RUN window must have an adjacent RUN window: a real run sustains the
+// pattern, whereas a single isolated match was a false positive (one
+// burpee window in capture 8). Verified on all five captures: run
+// windows inside run intervals 224 -> 224, false RUN windows away from
+// any run 1 -> 0.
+// Time axis is uniform (index / measured rate): at 50 Hz two BLE packets
+// share one Date.now() timestamp, so raw ts is not a usable sample clock.
+// Nothing in the app calls this yet — it is the tested building block.
+const VBT_CLASS_WIN_SEC = 6, VBT_CLASS_STEP_SEC = 3;
+
+function _vbtWindowFeatures(az, gm, fs) {
+  const N = az.length;
+  let mean = 0; for (let i = 0; i < N; i++) mean += az[i]; mean /= N;
+  let varSum = 0; for (let i = 0; i < N; i++) varSum += (az[i] - mean) * (az[i] - mean);
+  const std = Math.sqrt(varSum / N);
+  let g2 = 0; for (let i = 0; i < N; i++) g2 += gm[i] * gm[i];
+  const gyroRms = Math.sqrt(g2 / N);
+  // Dominant frequency: Hann-windowed DFT at the bin centres k*fs/N,
+  // searched over 0.4 Hz .. min(fs/2, 12 Hz) (same bins as a standard rfft).
+  const fMax = fs < 12 ? fs / 2 : 12;
+  const xw = new Float64Array(N);
+  for (let i = 0; i < N; i++) xw[i] = (az[i] - mean) * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)));
+  let bestP = -1, dom = 0;
+  for (let k = 1; k <= Math.floor(N / 2); k++) {
+    const f = k * fs / N;
+    if (f <= 0.4 || f >= fMax) continue;
+    let re = 0, im = 0;
+    const w = 2 * Math.PI * k / N;
+    for (let i = 0; i < N; i++) { re += xw[i] * Math.cos(w * i); im -= xw[i] * Math.sin(w * i); }
+    const P = re * re + im * im;
+    if (P > bestP) { bestP = P; dom = f; }
+  }
+  return { dom, std, gyroRms };
+}
+
+function vbtClassifyWindows(samples) {
+  const n = samples ? samples.length : 0;
+  if (n < 2) return [];
+  const durSec = (samples[n - 1].ts - samples[0].ts) / 1000;
+  if (!(durSec > 0)) return [];
+  const fs = (n - 1) / durSec;
+  const am = new Float64Array(n), gm = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = samples[i];
+    am[i] = Math.hypot(s.ax || 0, s.ay || 0, s.az || 0);
+    gm[i] = Math.hypot(s.wx || 0, s.wy || 0, s.wz || 0);
+  }
+  const W = VBT_CLASS_WIN_SEC, S = VBT_CLASS_STEP_SEC;
+  const rows = [];
+  for (let st = 0; st < durSec - W; st += S) {
+    const i0 = Math.ceil(st * fs - 1e-9), i1 = Math.ceil((st + W) * fs - 1e-9);
+    if (i1 - i0 < W * fs * 0.8) continue;
+    const { dom, std, gyroRms } = _vbtWindowFeatures(am.subarray(i0, i1), gm.subarray(i0, i1), fs);
+    let raw = 'WORK';
+    if (std < 0.3 && gyroRms < 15) raw = 'REST';
+    else if (dom >= 2.3 && dom <= 3.1 && std > 3 && gyroRms > 100) raw = 'RUN';
+    rows.push({ startSec: +st.toFixed(2), rawLabel: raw, dom: +dom.toFixed(2), std: +std.toFixed(2), gyroRms: +gyroRms.toFixed(1) });
+  }
+  rows.forEach((r, i) => {
+    const neighbourRun = (i > 0 && rows[i - 1].rawLabel === 'RUN') || (i + 1 < rows.length && rows[i + 1].rawLabel === 'RUN');
+    r.label = r.rawLabel === 'RUN' && !neighbourRun ? 'WORK' : r.rawLabel;
+  });
+  return rows;
+}
+
 // Thin UI wrapper around vbtConnect() for the On-Phone Debug Viewer's
 // Connect button — the underlying vbtConnect() itself is unchanged and
 // still returns a plain boolean; this just adds the "Connecting…" /
