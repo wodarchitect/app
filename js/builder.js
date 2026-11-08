@@ -3753,13 +3753,13 @@ const VALS = {
   goalRnds: [...Array(50)].map((_,i) => i+1),
   oddRnds:  [...Array(25)].map((_,i) => i*2+1),  // 1,3,5,7...49 for pyramid
   kg:       [999, 0, ...Array.from({length:300}, (_,i) => i+1)], // 999 = Max weight sentinel
-  minCap:   [...Array(120)].map((_,i) => i+1),
-  minDur:   [...Array(120)].map((_,i) => i+1),
+  minCap:   [...Array(180)].map((_,i) => i+1), // 1-180 min (was 120; long endurance sessions such as a 2h22 climb)
+  minDur:   [...Array(180)].map((_,i) => i+1),
   sec:      [5,10,15,20,25,30,35,40,45,50,55,60,75,90,120,150,180,240,300,360,420,480,600],
   totalInt: [...Array(60)].map((_,i) => i+1),
   intLen:   [15,20,25,30,45,60,75,90,120,150,180,240,300],
   tabRnds:  [...Array(30)].map((_,i) => i+1),
-  finMin:   [...Array(121)].map((_,i) => i),
+  finMin:   [...Array(181)].map((_,i) => i), // 0-180 min final time
   finSec:   [...Array(60)].map((_,i) => i),
 };
 
